@@ -1438,12 +1438,6 @@ fn add_subgraph_field(
         }
     }
 
-    println!(
-        "{} referencers: {:?}",
-        graph_enum_value,
-        subgraph.schema.referencers().directives
-    );
-
     match object_or_interface_field_definition_position {
         ObjectOrInterfaceFieldDefinitionPosition::Object(pos) => {
             pos.insert(&mut subgraph.schema, Component::from(subgraph_field))?;

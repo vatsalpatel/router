@@ -469,3 +469,178 @@ fn extracts_list_size_directives_to_correct_subgraphs() {
         apollo_compiler::ast::Value::Int(20.into())
     );
 }
+
+#[test]
+fn extracts_list_size_directives_with_dynamic_sizing_arguments() {
+    let supergraph = Supergraph::new(r#"
+     schema
+      @link(url: "https://specs.apollo.dev/link/v1.0")
+      @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+      @join__directive(graphs: [SUBGRAPH_A, SUBGRAPH_B], name: "link", args: {url: "https://specs.apollo.dev/cost/v0.1", import: ["@listSize"]})
+    {
+      query: Query
+    }
+    
+    directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+    
+    directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+    
+    directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean, overrideLabel: String, contextArguments: [join__ContextArgument!]) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+    
+    directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+    
+    directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+    
+    directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+    
+    directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+    
+    directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+    
+    type HasInts
+      @join__type(graph: SUBGRAPH_A)
+      @join__type(graph: SUBGRAPH_B)
+    {
+      ints: [Int!]
+    }
+    
+    input join__ContextArgument {
+      name: String!
+      type: String!
+      context: String!
+      selection: join__FieldValue!
+    }
+    
+    scalar join__DirectiveArguments
+    
+    scalar join__FieldSet
+    
+    scalar join__FieldValue
+    
+    enum join__Graph {
+      SUBGRAPH_A @join__graph(name: "subgraph-a", url: "")
+      SUBGRAPH_B @join__graph(name: "subgraph-b", url: "")
+    }
+    
+    scalar link__Import
+    
+    enum link__Purpose {
+      """
+      `SECURITY` features provide metadata necessary to securely resolve fields.
+      """
+      SECURITY
+    
+      """
+      `EXECUTION` features provide metadata necessary for operation execution.
+      """
+      EXECUTION
+    }
+    
+    type Query
+      @join__type(graph: SUBGRAPH_A)
+      @join__type(graph: SUBGRAPH_B)
+    {
+      sizedList(first: Int!): HasInts @join__directive(graphs: [SUBGRAPH_A], name: "listSize", args: {slicingArguments: ["first"], sizedFields: ["ints"], requireOneSlicingArgument: true}) @join__directive(graphs: [SUBGRAPH_B], name: "listSize", args: {slicingArguments: ["first"], sizedFields: ["ints"], requireOneSlicingArgument: false})
+    }
+    "#).expect("should parse");
+
+    let subgraphs = supergraph
+        .extract_subgraphs()
+        .expect("should extract subgraphs");
+
+    // Check subgraph-a directive applications
+    let a = subgraphs
+        .get("subgraph-a")
+        .expect("missing subgraph")
+        .schema
+        .schema();
+    let list_size = coord!(Query.sizedList)
+        .lookup_field(a)
+        .expect("has cost field")
+        .directives
+        .get("federation__listSize")
+        .expect("has listSize directive");
+
+    let sized_fields = list_size
+        .argument_by_name("sizedFields")
+        .expect("has sizedFields argument")
+        .as_list()
+        .expect("is list");
+    assert_eq!(sized_fields.len(), 1);
+    let sized_field = sized_fields.get(0).expect("has sized field").as_ref();
+    assert_eq!(
+        *sized_field,
+        apollo_compiler::ast::Value::String("ints".to_string())
+    );
+
+    let slicing_arguments = list_size
+        .argument_by_name("slicingArguments")
+        .expect("has slicingArguments argument")
+        .as_list()
+        .expect("is list");
+    assert_eq!(slicing_arguments.len(), 1);
+    let slicing_argument = slicing_arguments
+        .get(0)
+        .expect("has slicing argument")
+        .as_ref();
+    assert_eq!(
+        *slicing_argument,
+        apollo_compiler::ast::Value::String("first".to_string())
+    );
+
+    let require_one_slicing_argument = list_size
+        .argument_by_name("requireOneSlicingArgument")
+        .expect("has requireOneSlicingArgument argument");
+    assert_eq!(
+        *require_one_slicing_argument.as_ref(),
+        apollo_compiler::ast::Value::Boolean(true)
+    );
+
+    // Check subgraph-b directive applications
+    let b = subgraphs
+        .get("subgraph-b")
+        .expect("missing subgraph")
+        .schema
+        .schema();
+    let list_size = coord!(Query.sizedList)
+        .lookup_field(b)
+        .expect("has cost field")
+        .directives
+        .get("federation__listSize")
+        .expect("has listSize directive");
+
+    let sized_fields = list_size
+        .argument_by_name("sizedFields")
+        .expect("has sizedFields argument")
+        .as_list()
+        .expect("is list");
+    assert_eq!(sized_fields.len(), 1);
+    let sized_field = sized_fields.get(0).expect("has sized field").as_ref();
+    assert_eq!(
+        *sized_field,
+        apollo_compiler::ast::Value::String("ints".to_string())
+    );
+
+    let slicing_arguments = list_size
+        .argument_by_name("slicingArguments")
+        .expect("has slicingArguments argument")
+        .as_list()
+        .expect("is list");
+    assert_eq!(slicing_arguments.len(), 1);
+    let slicing_argument = slicing_arguments
+        .get(0)
+        .expect("has slicing argument")
+        .as_ref();
+    assert_eq!(
+        *slicing_argument,
+        apollo_compiler::ast::Value::String("first".to_string())
+    );
+
+    let require_one_slicing_argument = list_size
+        .argument_by_name("requireOneSlicingArgument")
+        .expect("has requireOneSlicingArgument argument");
+    assert_eq!(
+        *require_one_slicing_argument.as_ref(),
+        apollo_compiler::ast::Value::Boolean(false)
+    );
+}

@@ -132,3 +132,65 @@ pub(crate) fn directive_optional_variable_boolean_argument(
         None => Ok(None),
     }
 }
+
+pub(crate) fn directive_optional_list_argument<'doc>(
+    application: &'doc Node<Directive>,
+    name: &Name,
+) -> Result<Option<&'doc Vec<Node<Value>>>, FederationError> {
+    match application.argument_by_name(name) {
+        Some(value) => match value.deref() {
+            Value::List(items) => Ok(Some(items)),
+            _ => Err(FederationError::internal(format!(
+                "Argument \"{}\" of directive \"@{}\" must be an object.",
+                name, application.name
+            ))),
+        },
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn directive_required_list_argument<'doc>(
+    application: &'doc Node<Directive>,
+    name: &Name,
+) -> Result<&'doc Vec<Node<Value>>, FederationError> {
+    directive_optional_list_argument(application, name)?.ok_or_else(|| {
+        SingleFederationError::Internal {
+            message: format!(
+                "Required argument \"{}\" of directive \"@{}\" was not present.",
+                name, application.name
+            ),
+        }
+        .into()
+    })
+}
+
+pub(crate) fn directive_optional_object_argument<'doc>(
+    application: &'doc Node<Directive>,
+    name: &Name,
+) -> Result<Option<&'doc Vec<(Name, Node<Value>)>>, FederationError> {
+    match application.argument_by_name(name) {
+        Some(value) => match value.deref() {
+            Value::Object(fields) => Ok(Some(fields)),
+            _ => Err(FederationError::internal(format!(
+                "Argument \"{}\" of directive \"@{}\" must be an object.",
+                name, application.name
+            ))),
+        },
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn directive_required_object_argument<'doc>(
+    application: &'doc Node<Directive>,
+    name: &Name,
+) -> Result<&'doc Vec<(Name, Node<Value>)>, FederationError> {
+    directive_optional_object_argument(application, name)?.ok_or_else(|| {
+        SingleFederationError::Internal {
+            message: format!(
+                "Required argument \"{}\" of directive \"@{}\" was not present.",
+                name, application.name
+            ),
+        }
+        .into()
+    })
+}

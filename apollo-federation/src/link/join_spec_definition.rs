@@ -1,3 +1,4 @@
+use apollo_compiler::ast::Argument;
 use apollo_compiler::name;
 use apollo_compiler::schema::Directive;
 use apollo_compiler::schema::DirectiveDefinition;
@@ -13,6 +14,8 @@ use crate::link::argument::directive_optional_boolean_argument;
 use crate::link::argument::directive_optional_enum_argument;
 use crate::link::argument::directive_optional_string_argument;
 use crate::link::argument::directive_required_enum_argument;
+use crate::link::argument::directive_required_list_argument;
+use crate::link::argument::directive_required_object_argument;
 use crate::link::argument::directive_required_string_argument;
 use crate::link::spec::Identity;
 use crate::link::spec::Url;
@@ -28,6 +31,7 @@ pub(crate) const JOIN_FIELD_DIRECTIVE_NAME_IN_SPEC: Name = name!("field");
 pub(crate) const JOIN_IMPLEMENTS_DIRECTIVE_NAME_IN_SPEC: Name = name!("implements");
 pub(crate) const JOIN_UNIONMEMBER_DIRECTIVE_NAME_IN_SPEC: Name = name!("unionMember");
 pub(crate) const JOIN_ENUMVALUE_DIRECTIVE_NAME_IN_SPEC: Name = name!("enumValue");
+pub(crate) const JOIN_DIRECTIVE_DIRECTIVE_NAME_IN_SPEC: Name = name!("directive");
 
 pub(crate) const JOIN_NAME_ARGUMENT_NAME: Name = name!("name");
 pub(crate) const JOIN_URL_ARGUMENT_NAME: Name = name!("url");
@@ -44,6 +48,8 @@ pub(crate) const JOIN_OVERRIDE_ARGUMENT_NAME: Name = name!("override");
 pub(crate) const JOIN_USEROVERRIDDEN_ARGUMENT_NAME: Name = name!("usedOverridden");
 pub(crate) const JOIN_INTERFACE_ARGUMENT_NAME: Name = name!("interface");
 pub(crate) const JOIN_MEMBER_ARGUMENT_NAME: Name = name!("member");
+pub(crate) const JOIN_GRAPHS_ARGUMENT_NAME: Name = name!("graphs");
+pub(crate) const JOIN_ARGS_ARGUMENT_NAME: Name = name!("args");
 
 pub(crate) struct GraphDirectiveArguments<'doc> {
     pub(crate) name: &'doc str,
@@ -80,6 +86,12 @@ pub(crate) struct UnionMemberDirectiveArguments<'doc> {
 
 pub(crate) struct EnumValueDirectiveArguments {
     pub(crate) graph: Name,
+}
+
+pub(crate) struct DirectiveDirectiveArguments<'doc> {
+    pub(crate) graphs: Vec<&'doc Name>,
+    pub(crate) name: &'doc str,
+    pub(crate) args: Vec<Node<Argument>>,
 }
 
 #[derive(Clone)]
@@ -305,6 +317,46 @@ impl JoinSpecDefinition {
     ) -> Result<EnumValueDirectiveArguments, FederationError> {
         Ok(EnumValueDirectiveArguments {
             graph: directive_required_enum_argument(application, &JOIN_GRAPH_ARGUMENT_NAME)?,
+        })
+    }
+
+    pub(crate) fn directive_directive_definition<'schema>(
+        &self,
+        schema: &'schema FederationSchema,
+    ) -> Result<Option<&'schema Node<DirectiveDefinition>>, FederationError> {
+        if *self.version() < (Version { major: 0, minor: 4 }) {
+            return Ok(None);
+        }
+        self.directive_definition(schema, &JOIN_DIRECTIVE_DIRECTIVE_NAME_IN_SPEC)?
+            .ok_or_else(|| {
+                SingleFederationError::Internal {
+                    message: "Unexpectedly could not find @join__directive definition in schema"
+                        .to_owned(),
+                }
+                .into()
+            })
+            .map(Some)
+    }
+
+    pub(crate) fn directive_directive_arguments<'doc>(
+        &self,
+        application: &'doc Node<Directive>,
+    ) -> Result<DirectiveDirectiveArguments<'doc>, FederationError> {
+        Ok(DirectiveDirectiveArguments {
+            graphs: directive_required_list_argument(application, &JOIN_GRAPHS_ARGUMENT_NAME)?
+                .iter()
+                .filter_map(|graph| graph.as_enum())
+                .collect(),
+            name: directive_required_string_argument(application, &JOIN_NAME_ARGUMENT_NAME)?,
+            args: directive_required_object_argument(application, &JOIN_ARGS_ARGUMENT_NAME)?
+                .iter()
+                .map(|named_value| {
+                    Node::new(Argument {
+                        name: named_value.0.clone(),
+                        value: named_value.1.clone(),
+                    })
+                })
+                .collect(),
         })
     }
 }

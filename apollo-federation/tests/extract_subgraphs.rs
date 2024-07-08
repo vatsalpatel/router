@@ -357,3 +357,115 @@ fn extracts_cost_directives_to_correct_subgraphs() {
         .expect("has weight argument");
     assert_eq!(*cost.as_ref(), apollo_compiler::ast::Value::Int(10.into()));
 }
+
+#[test]
+fn extracts_list_size_directives_to_correct_subgraphs() {
+    let supergraph = Supergraph::new(r#"
+    schema
+      @link(url: "https://specs.apollo.dev/link/v1.0")
+      @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+      @join__directive(graphs: [SUBGRAPH_A, SUBGRAPH_B], name: "link", args: {url: "https://specs.apollo.dev/cost/v0.1", import: ["@listSize"]})
+    {
+      query: Query
+    }
+    
+    directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+    
+    directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+    
+    directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean, overrideLabel: String, contextArguments: [join__ContextArgument!]) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+    
+    directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+    
+    directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+    
+    directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+    
+    directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+    
+    directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+    
+    input join__ContextArgument {
+      name: String!
+      type: String!
+      context: String!
+      selection: join__FieldValue!
+    }
+    
+    scalar join__DirectiveArguments
+    
+    scalar join__FieldSet
+    
+    scalar join__FieldValue
+    
+    enum join__Graph {
+      SUBGRAPH_A @join__graph(name: "subgraph-a", url: "")
+      SUBGRAPH_B @join__graph(name: "subgraph-b", url: "")
+    }
+    
+    scalar link__Import
+    
+    enum link__Purpose {
+      """
+      `SECURITY` features provide metadata necessary to securely resolve fields.
+      """
+      SECURITY
+    
+      """
+      `EXECUTION` features provide metadata necessary for operation execution.
+      """
+      EXECUTION
+    }
+    
+    type Query
+      @join__type(graph: SUBGRAPH_A)
+      @join__type(graph: SUBGRAPH_B)
+    {
+      sharedWithListSize: Int @join__directive(graphs: [SUBGRAPH_A], name: "listSize", args: {assumedSize: 10, requireOneSlicingArgument: false}) @join__directive(graphs: [SUBGRAPH_B], name: "listSize", args: {assumedSize: 20, requireOneSlicingArgument: false})
+    }
+    "#).expect("should parse");
+
+    let subgraphs = supergraph
+        .extract_subgraphs()
+        .expect("should extract subgraphs");
+
+    let a = subgraphs
+        .get("subgraph-a")
+        .expect("missing subgraph")
+        .schema
+        .schema();
+    let list_size = coord!(Query.sharedWithListSize)
+        .lookup_field(a)
+        .expect("has cost field")
+        .directives
+        .get("federation__listSize")
+        .expect("has listSize directive");
+
+    let assumed_size = list_size
+        .argument_by_name("assumedSize")
+        .expect("has assumedSize argument");
+    assert_eq!(
+        *assumed_size.as_ref(),
+        apollo_compiler::ast::Value::Int(10.into())
+    );
+
+    let b = subgraphs
+        .get("subgraph-b")
+        .expect("missing subgraph")
+        .schema
+        .schema();
+    let list_size = coord!(Query.sharedWithListSize)
+        .lookup_field(b)
+        .expect("has cost field")
+        .directives
+        .get("federation__listSize")
+        .expect("has listSize directive");
+
+    let assumed_size = list_size
+        .argument_by_name("assumedSize")
+        .expect("has assumedSize argument");
+    assert_eq!(
+        *assumed_size.as_ref(),
+        apollo_compiler::ast::Value::Int(20.into())
+    );
+}

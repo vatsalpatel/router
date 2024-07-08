@@ -5,7 +5,6 @@ use apollo_compiler::Name;
 use apollo_compiler::Node;
 
 use crate::error::FederationError;
-use crate::error::SingleFederationError;
 use crate::link::spec::Identity;
 use crate::link::spec::Url;
 use crate::link::spec::Version;
@@ -17,6 +16,7 @@ pub(crate) const COST_DIRECTIVE_NAME_DEFAULT: Name = name!("federation__cost");
 pub(crate) const COST_WEIGHT_ARGUMENT_NAME: Name = name!("weight");
 
 pub(crate) const LIST_SIZE_DIRECTIVE_NAME_IN_SPEC: Name = name!("listSize");
+pub(crate) const LIST_SIZE_DIRECTIVE_NAME_DEFAULT: Name = name!("federation__listSize");
 pub(crate) const LIST_SIZE_ASSUMED_SIZE_ARGUMENT_NAME: Name = name!("assumedSize");
 pub(crate) const LIST_SIZE_SLICING_ARGUMENTS_ARGUMENT_NAME: Name = name!("slicingArguments");
 pub(crate) const LIST_SIZE_SIZED_FIELDS_ARGUMENT_NAME: Name = name!("sizedFields");
@@ -62,13 +62,7 @@ impl CostSpecDefinition {
     ) -> Result<Directive, FederationError> {
         let name_in_schema = self
             .directive_name_in_schema(schema, &LIST_SIZE_DIRECTIVE_NAME_IN_SPEC)?
-            .ok_or_else(|| SingleFederationError::Internal {
-                message: "Unexpectedly could not find demand control spec in schema".to_owned(),
-            })?;
-        println!(
-            "Adding listSize directive {} with args: {:?}",
-            name_in_schema, arguments
-        );
+            .unwrap_or(LIST_SIZE_DIRECTIVE_NAME_DEFAULT);
 
         Ok(Directive {
             name: name_in_schema,

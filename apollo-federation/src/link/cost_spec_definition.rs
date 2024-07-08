@@ -45,14 +45,11 @@ impl CostSpecDefinition {
         schema: &FederationSchema,
         arguments: Vec<Node<Argument>>,
     ) -> Result<Directive, FederationError> {
-        let name_in_schema = self
+        let name = self
             .directive_name_in_schema(schema, &COST_DIRECTIVE_NAME_IN_SPEC)?
             .unwrap_or(COST_DIRECTIVE_NAME_DEFAULT);
 
-        Ok(Directive {
-            name: name_in_schema,
-            arguments,
-        })
+        Ok(Directive { name, arguments })
     }
 
     pub(crate) fn list_size_directive(
@@ -60,14 +57,11 @@ impl CostSpecDefinition {
         schema: &FederationSchema,
         arguments: Vec<Node<Argument>>,
     ) -> Result<Directive, FederationError> {
-        let name_in_schema = self
+        let name = self
             .directive_name_in_schema(schema, &LIST_SIZE_DIRECTIVE_NAME_IN_SPEC)?
             .unwrap_or(LIST_SIZE_DIRECTIVE_NAME_DEFAULT);
 
-        Ok(Directive {
-            name: name_in_schema,
-            arguments,
-        })
+        Ok(Directive { name, arguments })
     }
 }
 

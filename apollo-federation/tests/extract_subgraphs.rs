@@ -1,3 +1,4 @@
+use apollo_compiler::ast::Directive;
 use apollo_compiler::coord;
 use apollo_compiler::schema::Value;
 use apollo_compiler::Node;
@@ -440,14 +441,10 @@ fn extracts_list_size_directives_to_correct_subgraphs() {
         .directives
         .get("federation__listSize")
         .expect("has listSize directive");
-
-    let assumed_size = list_size
-        .argument_by_name("assumedSize")
-        .expect("has assumedSize argument");
-    assert_eq!(
-        *assumed_size.as_ref(),
-        apollo_compiler::ast::Value::Int(10.into())
-    );
+    assert_assumed_size(list_size, Some(10));
+    assert_sized_fields(list_size, None);
+    assert_slicing_arguments(list_size, None);
+    assert_require_one_slicing_argument(list_size, Some(false));
 
     let b = subgraphs
         .get("subgraph-b")
@@ -460,14 +457,10 @@ fn extracts_list_size_directives_to_correct_subgraphs() {
         .directives
         .get("federation__listSize")
         .expect("has listSize directive");
-
-    let assumed_size = list_size
-        .argument_by_name("assumedSize")
-        .expect("has assumedSize argument");
-    assert_eq!(
-        *assumed_size.as_ref(),
-        apollo_compiler::ast::Value::Int(20.into())
-    );
+    assert_assumed_size(list_size, Some(20));
+    assert_sized_fields(list_size, None);
+    assert_slicing_arguments(list_size, None);
+    assert_require_one_slicing_argument(list_size, Some(false));
 }
 
 #[test]
@@ -548,7 +541,6 @@ fn extracts_list_size_directives_with_dynamic_sizing_arguments() {
         .extract_subgraphs()
         .expect("should extract subgraphs");
 
-    // Check subgraph-a directive applications
     let a = subgraphs
         .get("subgraph-a")
         .expect("missing subgraph")
@@ -560,43 +552,11 @@ fn extracts_list_size_directives_with_dynamic_sizing_arguments() {
         .directives
         .get("federation__listSize")
         .expect("has listSize directive");
+    assert_assumed_size(list_size, None);
+    assert_sized_fields(list_size, Some(&["ints"]));
+    assert_slicing_arguments(list_size, Some(&["first"]));
+    assert_require_one_slicing_argument(list_size, Some(true));
 
-    let sized_fields = list_size
-        .argument_by_name("sizedFields")
-        .expect("has sizedFields argument")
-        .as_list()
-        .expect("is list");
-    assert_eq!(sized_fields.len(), 1);
-    let sized_field = sized_fields.get(0).expect("has sized field").as_ref();
-    assert_eq!(
-        *sized_field,
-        apollo_compiler::ast::Value::String("ints".to_string())
-    );
-
-    let slicing_arguments = list_size
-        .argument_by_name("slicingArguments")
-        .expect("has slicingArguments argument")
-        .as_list()
-        .expect("is list");
-    assert_eq!(slicing_arguments.len(), 1);
-    let slicing_argument = slicing_arguments
-        .get(0)
-        .expect("has slicing argument")
-        .as_ref();
-    assert_eq!(
-        *slicing_argument,
-        apollo_compiler::ast::Value::String("first".to_string())
-    );
-
-    let require_one_slicing_argument = list_size
-        .argument_by_name("requireOneSlicingArgument")
-        .expect("has requireOneSlicingArgument argument");
-    assert_eq!(
-        *require_one_slicing_argument.as_ref(),
-        apollo_compiler::ast::Value::Boolean(true)
-    );
-
-    // Check subgraph-b directive applications
     let b = subgraphs
         .get("subgraph-b")
         .expect("missing subgraph")
@@ -608,39 +568,77 @@ fn extracts_list_size_directives_with_dynamic_sizing_arguments() {
         .directives
         .get("federation__listSize")
         .expect("has listSize directive");
+    assert_assumed_size(list_size, None);
+    assert_sized_fields(list_size, Some(&["ints"]));
+    assert_slicing_arguments(list_size, Some(&["first"]));
+    assert_require_one_slicing_argument(list_size, Some(false));
+}
 
+fn assert_assumed_size(list_size: &Directive, expected_assumed_size: Option<i32>) {
+    let assumed_size = list_size.argument_by_name("assumedSize");
+    match expected_assumed_size {
+        Some(i) => {
+            assert_eq!(
+                *assumed_size.expect("has assumed size").as_ref(),
+                apollo_compiler::ast::Value::Int(i.into())
+            );
+        }
+        None => {
+            assert!(assumed_size.is_none());
+        }
+    }
+}
+
+fn assert_sized_fields(list_size: &Directive, expected_sized_fields: Option<&[&str]>) {
     let sized_fields = list_size
         .argument_by_name("sizedFields")
-        .expect("has sizedFields argument")
-        .as_list()
-        .expect("is list");
-    assert_eq!(sized_fields.len(), 1);
-    let sized_field = sized_fields.get(0).expect("has sized field").as_ref();
-    assert_eq!(
-        *sized_field,
-        apollo_compiler::ast::Value::String("ints".to_string())
-    );
+        .and_then(|arg| arg.as_list());
+    assert_node_list(sized_fields, expected_sized_fields);
+}
 
+fn assert_slicing_arguments(list_size: &Directive, expected_slicing_arguments: Option<&[&str]>) {
     let slicing_arguments = list_size
         .argument_by_name("slicingArguments")
-        .expect("has slicingArguments argument")
-        .as_list()
-        .expect("is list");
-    assert_eq!(slicing_arguments.len(), 1);
-    let slicing_argument = slicing_arguments
-        .get(0)
-        .expect("has slicing argument")
-        .as_ref();
-    assert_eq!(
-        *slicing_argument,
-        apollo_compiler::ast::Value::String("first".to_string())
-    );
+        .and_then(|arg| arg.as_list());
+    assert_node_list(slicing_arguments, expected_slicing_arguments);
+}
 
-    let require_one_slicing_argument = list_size
-        .argument_by_name("requireOneSlicingArgument")
-        .expect("has requireOneSlicingArgument argument");
-    assert_eq!(
-        *require_one_slicing_argument.as_ref(),
-        apollo_compiler::ast::Value::Boolean(false)
-    );
+fn assert_node_list(node_list: Option<&[Node<Value>]>, expected_slice: Option<&[&str]>) {
+    match expected_slice {
+        Some(slice) => {
+            assert!(node_list.is_some());
+            let node_list = node_list.unwrap();
+            assert_eq!(node_list.len(), slice.len());
+            for i in 0..node_list.len() {
+                assert_eq!(
+                    *node_list[i].as_ref(),
+                    apollo_compiler::ast::Value::String(slice[i].to_string())
+                );
+            }
+        }
+        None => {
+            assert!(node_list.is_none());
+        }
+    }
+}
+
+fn assert_require_one_slicing_argument(
+    list_size: &Directive,
+    expected_require_one_slicing_argument: Option<bool>,
+) {
+    let require_one_slicing_argument = list_size.argument_by_name("requireOneSlicingArgument");
+
+    match expected_require_one_slicing_argument {
+        Some(b) => {
+            assert_eq!(
+                *require_one_slicing_argument
+                    .expect("has requireOneSlicingArgument")
+                    .as_ref(),
+                apollo_compiler::ast::Value::Boolean(b)
+            )
+        }
+        None => {
+            assert!(require_one_slicing_argument.is_none());
+        }
+    }
 }

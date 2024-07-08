@@ -141,7 +141,7 @@ pub(crate) fn directive_optional_list_argument<'doc>(
         Some(value) => match value.deref() {
             Value::List(items) => Ok(Some(items)),
             _ => Err(FederationError::internal(format!(
-                "Argument \"{}\" of directive \"@{}\" must be an object.",
+                "Argument \"{}\" of directive \"@{}\" must be an list.",
                 name, application.name
             ))),
         },

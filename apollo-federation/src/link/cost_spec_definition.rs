@@ -3,12 +3,14 @@ use apollo_compiler::ast::Directive;
 use apollo_compiler::name;
 use apollo_compiler::Name;
 use apollo_compiler::Node;
+use lazy_static::lazy_static;
 
 use crate::error::FederationError;
 use crate::link::spec::Identity;
 use crate::link::spec::Url;
 use crate::link::spec::Version;
 use crate::link::spec_definition::SpecDefinition;
+use crate::link::spec_definition::SpecDefinitions;
 use crate::schema::FederationSchema;
 
 pub(crate) const COST_DIRECTIVE_NAME_IN_SPEC: Name = name!("cost");
@@ -73,4 +75,15 @@ impl SpecDefinition for CostSpecDefinition {
     fn minimum_federation_version(&self) -> Option<&Version> {
         self.minimum_federation_version.as_ref()
     }
+}
+
+lazy_static! {
+    pub(crate) static ref COST_VERSIONS: SpecDefinitions<CostSpecDefinition> = {
+        let mut definitions = SpecDefinitions::new(Identity::cost_identity());
+        definitions.add(CostSpecDefinition::new(
+            Version { major: 0, minor: 1 },
+            Some(Version { major: 2, minor: 9 }),
+        ));
+        definitions
+    };
 }

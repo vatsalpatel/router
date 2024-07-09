@@ -39,6 +39,7 @@ use crate::error::MultipleFederationErrors;
 use crate::error::SingleFederationError;
 use crate::link::cost_spec_definition::CostSpecDefinition;
 use crate::link::cost_spec_definition::COST_DIRECTIVE_NAME_IN_SPEC;
+use crate::link::cost_spec_definition::COST_VERSIONS;
 use crate::link::cost_spec_definition::LIST_SIZE_DIRECTIVE_NAME_IN_SPEC;
 use crate::link::federation_spec_definition::get_federation_spec_definition_from_subgraph;
 use crate::link::federation_spec_definition::FederationSpecDefinition;
@@ -327,20 +328,12 @@ fn extract_subgraphs_from_fed_2_supergraph(
         join_spec_definition,
         filtered_types,
     )?;
-
-    // TODO: This needs to be registered in a list, then pulled for the appropriate fed version (probably within each subgraph handler)
-    let cost_spec_definition = &CostSpecDefinition::new(
-        Version { major: 0, minor: 1 },
-        Some(Version { major: 2, minor: 9 }),
-    );
-
     extract_object_type_content(
         supergraph_schema,
         subgraphs,
         graph_enum_value_name_to_subgraph_name,
         federation_spec_definitions,
         join_spec_definition,
-        cost_spec_definition,
         &object_types,
     )?;
     extract_interface_type_content(
@@ -349,7 +342,6 @@ fn extract_subgraphs_from_fed_2_supergraph(
         graph_enum_value_name_to_subgraph_name,
         federation_spec_definitions,
         join_spec_definition,
-        cost_spec_definition,
         &interface_types,
     )?;
     extract_union_type_content(
@@ -720,7 +712,6 @@ fn extract_object_type_content(
     graph_enum_value_name_to_subgraph_name: &IndexMap<Name, Arc<str>>,
     federation_spec_definitions: &IndexMap<Name, &'static FederationSpecDefinition>,
     join_spec_definition: &JoinSpecDefinition,
-    cost_spec_definition: &CostSpecDefinition,
     info: &[TypeInfo],
 ) -> Result<(), FederationError> {
     let field_directive_definition =
@@ -804,6 +795,9 @@ fn extract_object_type_content(
                             message: "Subgraph unexpectedly does not use federation spec"
                                 .to_owned(),
                         })?;
+                    let cost_spec_definition =
+                        get_cost_spec_definition(subgraph, federation_spec_definition);
+
                     add_subgraph_field(
                         field_pos.clone().into(),
                         field,
@@ -812,7 +806,7 @@ fn extract_object_type_content(
                         is_shareable,
                         None,
                         graph_enum_value,
-                        &cost_spec_definition,
+                        cost_spec_definition,
                         &join_directive_applications,
                     )?;
                 }
@@ -856,6 +850,9 @@ fn extract_object_type_content(
                             }.into()
                         );
                     }
+                    let cost_spec_definition =
+                        get_cost_spec_definition(subgraph, federation_spec_definition);
+
                     add_subgraph_field(
                         field_pos.clone().into(),
                         field,
@@ -864,7 +861,7 @@ fn extract_object_type_content(
                         is_shareable,
                         Some(field_directive_application),
                         graph_enum_value,
-                        &cost_spec_definition,
+                        cost_spec_definition,
                         &join_directive_applications,
                     )?;
                 }
@@ -881,7 +878,6 @@ fn extract_interface_type_content(
     graph_enum_value_name_to_subgraph_name: &IndexMap<Name, Arc<str>>,
     federation_spec_definitions: &IndexMap<Name, &'static FederationSpecDefinition>,
     join_spec_definition: &JoinSpecDefinition,
-    cost_spec_definition: &CostSpecDefinition,
     info: &[TypeInfo],
 ) -> Result<(), FederationError> {
     let field_directive_definition =
@@ -1014,6 +1010,9 @@ fn extract_interface_type_content(
                             message: "Subgraph unexpectedly does not use federation spec"
                                 .to_owned(),
                         })?;
+                    let cost_spec_definition =
+                        get_cost_spec_definition(subgraph, federation_spec_definition);
+
                     add_subgraph_field(
                         pos.field(field_name.clone()),
                         field,
@@ -1022,7 +1021,7 @@ fn extract_interface_type_content(
                         false,
                         None,
                         graph_enum_value,
-                        &cost_spec_definition,
+                        cost_spec_definition,
                         &join_directive_applications,
                     )?;
                 }
@@ -1059,6 +1058,9 @@ fn extract_interface_type_content(
                             }.into()
                         );
                     }
+                    let cost_spec_definition =
+                        get_cost_spec_definition(subgraph, federation_spec_definition);
+
                     add_subgraph_field(
                         pos.field(field_name.clone()),
                         field,
@@ -1067,7 +1069,7 @@ fn extract_interface_type_content(
                         false,
                         Some(field_directive_application),
                         graph_enum_value,
-                        &cost_spec_definition,
+                        cost_spec_definition,
                         &join_directive_applications,
                     )?;
                 }
@@ -1340,7 +1342,7 @@ fn add_subgraph_field(
     is_shareable: bool,
     field_directive_application: Option<&FieldDirectiveArguments>,
     graph_enum_value: &Name,
-    cost_spec_definition: &CostSpecDefinition,
+    cost_spec_definition: Option<&CostSpecDefinition>,
     join_directive_applications: &Vec<DirectiveDirectiveArguments>,
 ) -> Result<(), FederationError> {
     let field_directive_application =
@@ -1425,16 +1427,18 @@ fn add_subgraph_field(
             continue;
         }
 
-        if app.name == COST_DIRECTIVE_NAME_IN_SPEC.as_str() {
-            subgraph_field.directives.push(Node::new(
-                cost_spec_definition.cost_directive(&subgraph.schema, app.args.clone())?,
-            ));
-        }
+        if let Some(cost_spec_definition) = cost_spec_definition {
+            if app.name == COST_DIRECTIVE_NAME_IN_SPEC.as_str() {
+                subgraph_field.directives.push(Node::new(
+                    cost_spec_definition.cost_directive(&subgraph.schema, app.args.clone())?,
+                ));
+            }
 
-        if app.name == LIST_SIZE_DIRECTIVE_NAME_IN_SPEC.as_str() {
-            subgraph_field.directives.push(Node::new(
-                cost_spec_definition.list_size_directive(&subgraph.schema, app.args.clone())?,
-            ));
+            if app.name == LIST_SIZE_DIRECTIVE_NAME_IN_SPEC.as_str() {
+                subgraph_field.directives.push(Node::new(
+                    cost_spec_definition.list_size_directive(&subgraph.schema, app.args.clone())?,
+                ));
+            }
         }
     }
 
@@ -1516,6 +1520,18 @@ fn get_subgraph<'subgraph>(
         }
         .into()
     })
+}
+
+fn get_cost_spec_definition(
+    subgraph: &FederationSubgraph,
+    federation_spec_definition: &'static FederationSpecDefinition,
+) -> Option<&'static CostSpecDefinition> {
+    subgraph
+        .schema
+        .metadata()
+        .and_then(|metadata| metadata.for_identity(&Identity::cost_identity()))
+        .and_then(|link| COST_VERSIONS.find(&link.url.version))
+        .or_else(|| COST_VERSIONS.for_federation_version(federation_spec_definition.version()))
 }
 
 struct FederationSubgraph {

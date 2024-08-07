@@ -1,0 +1,38 @@
+telemetry:
+  apollo:
+    field_level_instrumentation_sampler: 1
+  instrumentation:
+    spans:
+      mode: 'spec_compliant'
+      supergraph:
+        attributes:
+          cost.estimated: true
+    # Basic instrumentation
+    instruments:
+      default_requirement_level: recommended
+      supergraph:
+        cost.actual: # true # The actual cost
+          attributes:
+            cost.result: true # Of the estimated costs which of these would have been rejected
+            graphql.operation.name: true
+        cost.estimated: # The estimated cost
+          attributes:
+            cost.result: true # Of the estimated costs which of these would have been rejected
+            graphql.operation.name: true
+        cost.delta: true # Actual - estimated
+        # custom instrument
+        cost.rejected.operations:
+          type: histogram
+          value:
+            # Estimated cost is used to populate the histogram
+            cost: estimated
+          description: 'Estimated cost per rejected operation.'
+          unit: delta
+          condition:
+            eq:
+              # Only show rejected operations.
+              - cost: result
+              - 'COST_TOO_EXPENSIVE'
+          attributes:
+            cost.result: true
+            graphql.operation.name: true

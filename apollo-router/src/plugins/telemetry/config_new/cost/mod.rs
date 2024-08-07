@@ -342,16 +342,17 @@ mod test {
 
     use crate::context::OPERATION_NAME;
     use crate::plugins::demand_control::CostContext;
-    use crate::plugins::telemetry::config_new::cost::CostInstruments;
-    use crate::plugins::telemetry::config_new::cost::CostInstrumentsConfig;
     use crate::plugins::telemetry::config_new::instruments::Instrumented;
+    use crate::plugins::telemetry::config_new::instruments::InstrumentsConfig;
+    use crate::plugins::telemetry::config_new::instruments::SupergraphInstruments;
     use crate::services::supergraph;
     use crate::Context;
 
     #[test]
     fn test_default_estimated() {
         let config = config(include_str!("fixtures/cost_estimated.router.yaml"));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!("cost.estimated", 100.0);
@@ -363,7 +364,8 @@ mod test {
     #[test]
     fn test_default_actual() {
         let config = config(include_str!("fixtures/cost_actual.router.yaml"));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!("cost.actual", 10.0);
@@ -375,7 +377,8 @@ mod test {
     #[test]
     fn test_default_delta() {
         let config = config(include_str!("fixtures/cost_delta.router.yaml"));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!("cost.delta", 90.0);
@@ -389,7 +392,8 @@ mod test {
         let config = config(include_str!(
             "fixtures/cost_estimated_with_attributes.router.yaml"
         ));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!("cost.estimated", 100.0, cost.result = "COST_TOO_EXPENSIVE");
@@ -403,7 +407,8 @@ mod test {
         let config = config(include_str!(
             "fixtures/cost_actual_with_attributes.router.yaml"
         ));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!("cost.actual", 10.0, cost.result = "COST_TOO_EXPENSIVE");
@@ -412,12 +417,13 @@ mod test {
         assert_histogram_sum!("cost.actual", 20.0, cost.result = "COST_TOO_EXPENSIVE");
     }
 
-    #[test]
+    #[test_log::test]
     fn test_default_delta_with_attributes() {
         let config = config(include_str!(
             "fixtures/cost_delta_with_attributes.router.yaml"
         ));
-        let instruments = config.to_instruments(Arc::new(config.new_static_instruments()));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
         make_request(&instruments);
 
         assert_histogram_sum!(
@@ -436,15 +442,38 @@ mod test {
         );
     }
 
-    fn config(config: &'static str) -> CostInstrumentsConfig {
+    #[test_log::test]
+    fn test_filtering_by_result() {
+        let config = config(include_str!("fixtures/cost_result_filtering.router.yaml"));
+        let instruments = config
+            .new_supergraph_instruments(Arc::new(config.new_builtin_supergraph_instruments()));
+
+        make_request(&instruments);
+        assert_histogram_sum!(
+            "cost.rejected.operations",
+            100.0,
+            cost.result = "COST_TOO_EXPENSIVE",
+            graphql.operation.name = "Test"
+        );
+
+        make_request(&instruments);
+        assert_histogram_sum!(
+            "cost.rejected.operations",
+            200.0,
+            cost.result = "COST_TOO_EXPENSIVE",
+            graphql.operation.name = "Test"
+        );
+    }
+
+    fn config(config: &'static str) -> InstrumentsConfig {
         let config: serde_json::Value = serde_yaml::from_str(config).expect("config");
-        let supergraph_instruments = jsonpath_lib::select(&config, "$..supergraph");
+        let supergraph_instruments = jsonpath_lib::select(&config, "$..instruments");
 
         serde_json::from_value((*supergraph_instruments.unwrap().first().unwrap()).clone())
             .expect("config")
     }
 
-    fn make_request(instruments: &CostInstruments) {
+    fn make_request(instruments: &SupergraphInstruments) {
         let context = Context::new();
         context.extensions().with_lock(|mut lock| {
             lock.insert(CostContext::default());

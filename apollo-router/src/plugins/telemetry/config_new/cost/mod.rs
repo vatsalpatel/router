@@ -489,13 +489,12 @@ mod test {
                 .build()
                 .expect("request"),
         );
+        instruments.on_response_event(&crate::graphql::Response::default(), &context);
         instruments.on_response(
             &supergraph::Response::fake_builder()
                 .context(context.clone())
                 .build()
                 .expect("response"),
         );
-
-        instruments.on_response_event(&crate::graphql::Response::default(), &context);
     }
 }

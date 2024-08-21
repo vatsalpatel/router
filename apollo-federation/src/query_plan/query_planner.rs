@@ -330,6 +330,9 @@ impl QueryPlanner {
             // TODO(@goto-bus-stop) this is not an internal error, but a user error
             .map_err(|_| FederationError::internal("requested operation does not exist"))?;
 
+        #[cfg(test)]
+        let supergraph_paths = crate::simulation::simulate_supergraph_query(&self.supergraph_schema, document, operation_name.as_deref())?;
+
         if operation.selection_set.selections.is_empty() {
             // This should never happen because `operation` comes from a known-valid document.
             // TODO(@goto-bus-stop) it's probably fair to panic here :)
@@ -525,6 +528,12 @@ impl QueryPlanner {
         };
 
         snapshot!(plan, "query plan");
+
+        #[cfg(test)]
+        {
+            let plan_paths = crate::simulation::simulate_query_plan(&self.supergraph_schema, &plan)?;
+            crate::simulation::compare_paths(&supergraph_paths, &plan_paths)?;
+        }
 
         Ok(plan)
     }

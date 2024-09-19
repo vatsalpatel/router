@@ -205,12 +205,12 @@ impl TestExecution {
             .listener(listener)
             .start()
             .await;
+
         writeln!(out, "subgraphs listening on {url}").unwrap();
 
         let mut subgraph_overrides = HashMap::new();
 
         for (name, subgraph) in subgraphs {
-            // TODO: do the same in reload_configuration and reload_subgraphs
             if let Some(snapshot_path) = subgraph.snapshot_path.as_ref() {
                 let snapshot_server = SnapshotServer::spawn(
                     &path.join(snapshot_path),
@@ -314,35 +314,54 @@ impl TestExecution {
         let mut subgraph_overrides = HashMap::new();
 
         for (name, subgraph) in &self.subgraphs {
-            for SubgraphRequestMock { request, response } in &subgraph.requests {
-                let mut builder = Mock::given(body_partial_json(&request.body));
+            if let Some(snapshot_path) = subgraph.snapshot_path.as_ref() {
+                let snapshot_server = SnapshotServer::spawn(
+                    &path.join(snapshot_path),
+                    Uri::from_static("http://unused"),
+                    true,
+                    false,
+                    Some(vec![CONTENT_TYPE.to_string(), CONTENT_LENGTH.to_string()]),
+                )
+                .await;
+                let snapshot_url = snapshot_server.uri();
+                subgraph_overrides
+                    .entry(name.to_string())
+                    .or_insert(snapshot_url.clone());
+                writeln!(
+                    out,
+                    "snapshot server for {name} listening on {snapshot_url}"
+                )?;
+            } else {
+                for SubgraphRequestMock { request, response } in &subgraph.requests {
+                    let mut builder = Mock::given(body_partial_json(&request.body));
 
-                if let Some(s) = request.method.as_deref() {
-                    builder = builder.and(method(s));
+                    if let Some(s) = request.method.as_deref() {
+                        builder = builder.and(method(s));
+                    }
+
+                    if let Some(s) = request.path.as_deref() {
+                        builder = builder.and(wiremock::matchers::path(s));
+                    }
+
+                    for (header_name, header_value) in &request.headers {
+                        builder = builder.and(header(header_name.as_str(), header_value.as_str()));
+                    }
+
+                    let mut res = ResponseTemplate::new(response.status.unwrap_or(200));
+                    for (header_name, header_value) in &response.headers {
+                        res = res.append_header(header_name.as_str(), header_value.as_str());
+                    }
+                    builder
+                        .respond_with(res.set_body_json(&response.body))
+                        .mount(&subgraphs_server)
+                        .await;
                 }
 
-                if let Some(s) = request.path.as_deref() {
-                    builder = builder.and(wiremock::matchers::path(s));
-                }
-
-                for (header_name, header_value) in &request.headers {
-                    builder = builder.and(header(header_name.as_str(), header_value.as_str()));
-                }
-
-                let mut res = ResponseTemplate::new(response.status.unwrap_or(200));
-                for (header_name, header_value) in &response.headers {
-                    res = res.append_header(header_name.as_str(), header_value.as_str());
-                }
-                builder
-                    .respond_with(res.set_body_json(&response.body))
-                    .mount(&subgraphs_server)
-                    .await;
+                // Add a default override for products, if not specified
+                subgraph_overrides
+                    .entry(name.to_string())
+                    .or_insert(url.clone());
             }
-
-            // Add a default override for products, if not specified
-            subgraph_overrides
-                .entry(name.to_string())
-                .or_insert(url.clone());
         }
 
         let config = open_file(&path.join(configuration_path), out)?;
@@ -366,29 +385,31 @@ impl TestExecution {
         subgraphs_server.reset().await;
 
         for subgraph in subgraphs.values() {
-            for SubgraphRequestMock { request, response } in &subgraph.requests {
-                let mut builder = Mock::given(body_partial_json(&request.body));
+            if subgraph.snapshot_path.as_ref().is_none() {
+                for SubgraphRequestMock { request, response } in &subgraph.requests {
+                    let mut builder = Mock::given(body_partial_json(&request.body));
 
-                if let Some(s) = request.method.as_deref() {
-                    builder = builder.and(method(s));
-                }
+                    if let Some(s) = request.method.as_deref() {
+                        builder = builder.and(method(s));
+                    }
 
-                if let Some(s) = request.path.as_deref() {
-                    builder = builder.and(wiremock::matchers::path(s));
-                }
+                    if let Some(s) = request.path.as_deref() {
+                        builder = builder.and(wiremock::matchers::path(s));
+                    }
 
-                for (header_name, header_value) in &request.headers {
-                    builder = builder.and(header(header_name.as_str(), header_value.as_str()));
-                }
+                    for (header_name, header_value) in &request.headers {
+                        builder = builder.and(header(header_name.as_str(), header_value.as_str()));
+                    }
 
-                let mut res = ResponseTemplate::new(response.status.unwrap_or(200));
-                for (header_name, header_value) in &response.headers {
-                    res = res.append_header(header_name.as_str(), header_value.as_str());
+                    let mut res = ResponseTemplate::new(response.status.unwrap_or(200));
+                    for (header_name, header_value) in &response.headers {
+                        res = res.append_header(header_name.as_str(), header_value.as_str());
+                    }
+                    builder
+                        .respond_with(res.set_body_json(&response.body))
+                        .mount(subgraphs_server)
+                        .await;
                 }
-                builder
-                    .respond_with(res.set_body_json(&response.body))
-                    .mount(subgraphs_server)
-                    .await;
             }
         }
 

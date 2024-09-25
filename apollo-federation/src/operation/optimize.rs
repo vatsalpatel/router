@@ -3495,7 +3495,7 @@ mod tests {
             match path.split_first() {
                 None => {
                     // Base case
-                    Arc::make_mut(&mut ss.selections).clear();
+                    ss.selections = Default::default();
                     Ok(())
                 }
 

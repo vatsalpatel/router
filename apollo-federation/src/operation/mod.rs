@@ -1445,8 +1445,12 @@ impl SelectionSet {
     // TODO: Ideally, this method returns a proper, recursive iterator. As is, there is a lot of
     // overhead due to indirection, both from over allocation and from v-table lookups.
     pub(crate) fn split_top_level_fields(self) -> Box<dyn Iterator<Item = SelectionSet>> {
-        let parent_type = self.type_position.clone();
-        let selections: IndexMap<SelectionKey, Selection> = (**self.selections).clone();
+        let SelectionSet {
+            schema: _,
+            type_position: parent_type,
+            selections,
+        } = self;
+        let selections = Arc::unwrap_or_clone(selections);
         Box::new(selections.into_values().flat_map(move |sel| {
             let digest: Box<dyn Iterator<Item = SelectionSet>> = if sel.is_field() {
                 Box::new(std::iter::once(SelectionSet::from_selection(
@@ -3170,8 +3174,7 @@ impl NamedFragments {
         }
         if selection_set.selections.len() == 1 {
             // true if NOT field selection OR non-leaf field
-            return if let Some((_, Selection::Field(field_selection))) =
-                selection_set.selections.first()
+            return if let Some(Selection::Field(field_selection)) = selection_set.selections.first()
             {
                 field_selection.selection_set.is_some()
             } else {

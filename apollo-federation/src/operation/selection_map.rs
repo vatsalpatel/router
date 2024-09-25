@@ -1,7 +1,6 @@
 #![warn(dead_code)]
 use std::borrow::Cow;
 use std::iter::Map;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use apollo_compiler::collections::IndexMap;
@@ -32,17 +31,38 @@ use crate::operation::SiblingTypename;
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub(crate) struct SelectionMap(IndexMap<SelectionKey, Selection>);
 
-impl Deref for SelectionMap {
-    type Target = IndexMap<SelectionKey, Selection>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl SelectionMap {
     pub(crate) fn new() -> Self {
         SelectionMap(IndexMap::default())
+    }
+
+    /// Returns the number of selections in the map.
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns true if there are no selections in the map.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the first selection in the map, or None if the map is empty.
+    pub(crate) fn first(&self) -> Option<&Selection> {
+        self.0.first().map(|(_key, value)| value)
+    }
+
+    /// Returns true if the given key exists in the map.
+    pub(crate) fn contains_key(&self, key: &SelectionKey) -> bool {
+        self.0.contains_key(key)
+    }
+
+    /// Returns true if the given key exists in the map.
+    pub(crate) fn get(&self, key: &SelectionKey) -> Option<&Selection> {
+        self.0.get(key)
+    }
+
+    pub(crate) fn get_mut(&mut self, key: &SelectionKey) -> Option<SelectionValue> {
+        self.0.get_mut(key).map(SelectionValue::new)
     }
 
     pub(crate) fn insert(&mut self, value: Selection) -> Option<Selection> {
@@ -57,19 +77,27 @@ impl SelectionMap {
             .map(|(index, _key, selection)| (index, selection))
     }
 
-    pub(crate) fn retain(
-        &mut self,
-        mut predicate: impl FnMut(&SelectionKey, &Selection) -> bool,
-    ) {
+    pub(crate) fn retain(&mut self, mut predicate: impl FnMut(&SelectionKey, &Selection) -> bool) {
         self.0.retain(|k, v| predicate(k, v))
     }
 
-    pub(crate) fn get_mut(&mut self, key: &SelectionKey) -> Option<SelectionValue> {
-        self.0.get_mut(key).map(SelectionValue::new)
+    /// Iterate over all selections and selection keys.
+    pub(crate) fn iter(&self) -> indexmap::map::Iter<'_, SelectionKey, Selection> {
+        self.0.iter()
     }
 
     pub(crate) fn iter_mut(&mut self) -> IterMut {
         self.0.iter_mut().map(|(k, v)| (k, SelectionValue::new(v)))
+    }
+
+    /// Iterate over all selections.
+    pub(crate) fn values(&self) -> indexmap::map::Values<'_, SelectionKey, Selection> {
+        self.0.values()
+    }
+
+    /// Iterate over all selections.
+    pub(crate) fn into_values(self) -> indexmap::map::IntoValues<SelectionKey, Selection> {
+        self.0.into_values()
     }
 
     pub(super) fn entry(&mut self, key: SelectionKey) -> Entry {
@@ -86,6 +114,10 @@ impl SelectionMap {
     pub(crate) fn extend_ref(&mut self, other: &SelectionMap) {
         self.0
             .extend(other.iter().map(|(k, v)| (k.clone(), v.clone())))
+    }
+
+    pub(crate) fn as_slice(&self) -> &indexmap::map::Slice<SelectionKey, Selection> {
+        self.0.as_slice()
     }
 
     /// Returns the selection set resulting from "recursively" filtering any selection
@@ -107,10 +139,9 @@ impl SelectionMap {
                     if let Some(sub_selections) = &field.selection_set {
                         match sub_selections.filter_recursive_depth_first(predicate)? {
                             Cow::Borrowed(_) => Cow::Borrowed(selection),
-                            Cow::Owned(new) => Cow::Owned(Selection::from_field(
-                                field.field.clone(),
-                                Some(new),
-                            )),
+                            Cow::Owned(new) => {
+                                Cow::Owned(Selection::from_field(field.field.clone(), Some(new)))
+                            }
                         }
                     } else {
                         Cow::Borrowed(selection)
@@ -121,12 +152,12 @@ impl SelectionMap {
                     .filter_recursive_depth_first(predicate)?
                 {
                     Cow::Borrowed(_) => Cow::Borrowed(selection),
-                    Cow::Owned(selection_set) => Cow::Owned(Selection::InlineFragment(
-                        Arc::new(InlineFragmentSelection::new(
+                    Cow::Owned(selection_set) => Cow::Owned(Selection::InlineFragment(Arc::new(
+                        InlineFragmentSelection::new(
                             fragment.inline_fragment.clone(),
                             selection_set,
-                        )),
-                    )),
+                        ),
+                    ))),
                 },
                 Selection::FragmentSpread(_) => {
                     return Err(FederationError::internal("unexpected fragment spread"))
@@ -202,16 +233,12 @@ impl<'a> SelectionValue<'a> {
             Selection::Field(field_selection) => {
                 SelectionValue::Field(FieldSelectionValue::new(field_selection))
             }
-            Selection::FragmentSpread(fragment_spread_selection) => {
-                SelectionValue::FragmentSpread(FragmentSpreadSelectionValue::new(
-                    fragment_spread_selection,
-                ))
-            }
-            Selection::InlineFragment(inline_fragment_selection) => {
-                SelectionValue::InlineFragment(InlineFragmentSelectionValue::new(
-                    inline_fragment_selection,
-                ))
-            }
+            Selection::FragmentSpread(fragment_spread_selection) => SelectionValue::FragmentSpread(
+                FragmentSpreadSelectionValue::new(fragment_spread_selection),
+            ),
+            Selection::InlineFragment(inline_fragment_selection) => SelectionValue::InlineFragment(
+                InlineFragmentSelectionValue::new(inline_fragment_selection),
+            ),
         }
     }
 
@@ -323,10 +350,7 @@ impl<'a> VacantEntry<'a> {
         self.0.key()
     }
 
-    pub(crate) fn insert(
-        self,
-        value: Selection,
-    ) -> Result<SelectionValue<'a>, FederationError> {
+    pub(crate) fn insert(self, value: Selection) -> Result<SelectionValue<'a>, FederationError> {
         if *self.key() != value.key() {
             return Err(Internal {
                 message: format!(
@@ -348,4 +372,3 @@ impl IntoIterator for SelectionMap {
         <IndexMap<SelectionKey, Selection> as IntoIterator>::into_iter(self.0)
     }
 }
-

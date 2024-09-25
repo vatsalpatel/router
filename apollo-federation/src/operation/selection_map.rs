@@ -1,3 +1,4 @@
+#![warn(dead_code)]
 use std::borrow::Cow;
 use std::iter::Map;
 use std::ops::Deref;
@@ -44,17 +45,8 @@ impl SelectionMap {
         SelectionMap(IndexMap::default())
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.0.clear();
-    }
-
     pub(crate) fn insert(&mut self, value: Selection) -> Option<Selection> {
         self.0.insert(value.key(), value)
-    }
-
-    /// Insert a selection at a specific index.
-    pub(crate) fn insert_at(&mut self, index: usize, value: Selection) -> Option<Selection> {
-        self.0.shift_insert(index, value.key(), value)
     }
 
     /// Remove a selection from the map. Returns the selection and its numeric index.
@@ -319,21 +311,8 @@ impl<'a> OccupiedEntry<'a> {
         self.0.get()
     }
 
-    pub(crate) fn get_mut(&mut self) -> SelectionValue {
-        SelectionValue::new(self.0.get_mut())
-    }
-
     pub(crate) fn into_mut(self) -> SelectionValue<'a> {
         SelectionValue::new(self.0.into_mut())
-    }
-
-    pub(crate) fn key(&self) -> &SelectionKey {
-        self.0.key()
-    }
-
-    pub(crate) fn remove(self) -> Selection {
-        // We specifically use shift_remove() instead of swap_remove() to maintain order.
-        self.0.shift_remove()
     }
 }
 

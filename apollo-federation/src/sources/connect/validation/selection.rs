@@ -28,10 +28,10 @@ use crate::sources::connect::json_selection::NamedSelection;
 use crate::sources::connect::json_selection::PathList;
 use crate::sources::connect::spec::schema::CONNECT_SELECTION_ARGUMENT_NAME;
 use crate::sources::connect::validation::coordinates::connect_directive_http_body_coordinate;
+use crate::sources::connect::validation::graphql::SchemaInfo;
 use crate::sources::connect::validation::selection::visitor::visit;
 use crate::sources::connect::validation::selection::visitor::SelectionPart;
 use crate::sources::connect::validation::selection::visitor::Visitor;
-use crate::sources::connect::validation::graphql::SchemaInfo;
 use crate::sources::connect::JSONSelection;
 use crate::sources::connect::SubSelection;
 

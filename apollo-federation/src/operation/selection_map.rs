@@ -6,7 +6,7 @@ use std::sync::Arc;
 use apollo_compiler::Name;
 use hashbrown::hash_map::DefaultHashBuilder;
 use hashbrown::raw::RawTable;
-use serde::ser::SerializeMap;
+use serde::ser::SerializeSeq;
 use serde::Serialize;
 
 use crate::error::FederationError;
@@ -103,7 +103,7 @@ pub(crate) struct SelectionMap {
 
 impl std::fmt::Debug for SelectionMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map().entries(self.iter()).finish()
+        f.debug_set().entries(self.values()).finish()
     }
 }
 
@@ -124,11 +124,11 @@ impl Serialize for SelectionMap {
     where
         S: serde::Serializer,
     {
-        let mut map = serializer.serialize_map(Some(self.len()))?;
-        for (key, value) in self.iter() {
-            map.serialize_entry(&key, value)?;
+        let mut seq = serializer.serialize_seq(Some(self.len()))?;
+        for value in self.values() {
+            seq.serialize_element(value)?;
         }
-        map.end()
+        seq.end()
     }
 }
 
@@ -250,19 +250,6 @@ impl SelectionMap {
             self.rebuild_table_no_grow();
         }
         assert!(self.selections.len() == self.table.len());
-    }
-
-    /// Iterate over all selections and selection keys.
-    #[deprecated = "Prefer values()"]
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (SelectionKey, &'_ Selection)> {
-        self.selections.iter().map(|v| (v.key(), v))
-    }
-
-    #[deprecated = "Prefer values_mut()"]
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (SelectionKey, SelectionValue<'_>)> {
-        self.selections
-            .iter_mut()
-            .map(|v| (v.key(), SelectionValue::new(v)))
     }
 
     /// Iterate over all selections.
@@ -429,6 +416,14 @@ impl<'a> SelectionValue<'a> {
         }
     }
 
+    pub(super) fn key(&self) -> SelectionKey {
+        match self {
+            Self::Field(field) => field.get().key(),
+            Self::FragmentSpread(frag) => frag.get().key(),
+            Self::InlineFragment(frag) => frag.get().key(),
+        }
+    }
+
     pub(super) fn directives(&self) -> &'_ DirectiveList {
         match self {
             Self::Field(field) => &field.get().field.directives,
@@ -552,31 +547,5 @@ impl<'a> VacantEntry<'a> {
             .into());
         };
         Ok(SelectionValue::new(self.map.raw_insert(self.hash, value)))
-    }
-}
-
-impl IntoIterator for SelectionMap {
-    type Item = (SelectionKey, Selection);
-    type IntoIter =
-        std::iter::Map<std::vec::IntoIter<Selection>, fn(Selection) -> (SelectionKey, Selection)>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.selections
-            .into_iter()
-            .map(|selection| (selection.key(), selection))
-    }
-}
-
-impl<'a> IntoIterator for &'a SelectionMap {
-    type Item = (SelectionKey, &'a Selection);
-    type IntoIter = std::iter::Map<
-        std::slice::Iter<'a, Selection>,
-        fn(&'a Selection) -> (SelectionKey, &'a Selection),
-    >;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.selections
-            .iter()
-            .map(|selection| (selection.key(), selection))
     }
 }

@@ -231,7 +231,7 @@ impl Selection {
                 return self
                     .with_updated_selections(
                         self_sub_selection.type_position.clone(),
-                        diff.into_iter().map(|(_, v)| v),
+                        diff.into_iter(),
                     )
                     .map(Some);
             }
@@ -252,7 +252,7 @@ impl Selection {
                 return self
                     .with_updated_selections(
                         self_sub_selection.type_position.clone(),
-                        common.into_iter().map(|(_, v)| v),
+                        common.into_iter(),
                     )
                     .map(Some);
             }
@@ -267,9 +267,9 @@ impl SelectionSet {
     pub(crate) fn minus(&self, other: &SelectionSet) -> Result<SelectionSet, FederationError> {
         let iter = self
             .selections
-            .iter()
-            .map(|(k, v)| {
-                if let Some(other_v) = other.selections.get(&k) {
+            .values()
+            .map(|v| {
+                if let Some(other_v) = other.selections.get(&v.key()) {
                     v.minus(other_v)
                 } else {
                     Ok(Some(v.clone()))
@@ -296,9 +296,9 @@ impl SelectionSet {
 
         let iter = self
             .selections
-            .iter()
-            .map(|(k, v)| {
-                if let Some(other_v) = other.selections.get(&k) {
+            .values()
+            .map(|v| {
+                if let Some(other_v) = other.selections.get(&v.key()) {
                     v.intersection(other_v)
                 } else {
                     Ok(None)
@@ -750,7 +750,7 @@ impl Fragment {
             return false;
         }
 
-        self.selection_set.selections.iter().any(|(_, selection)| {
+        self.selection_set.selections.values().any(|selection| {
             matches!(
                 selection,
                 Selection::FragmentSpread(fragment) if fragment.spread.fragment_name == *other_fragment_name
@@ -1691,7 +1691,7 @@ impl FragmentGenerator {
             selection_set.type_position.clone(),
         );
 
-        for (_key, selection) in Arc::make_mut(&mut selection_set.selections).iter_mut() {
+        for selection in Arc::make_mut(&mut selection_set.selections).values_mut() {
             match selection {
                 SelectionValue::Field(mut field) => {
                     if let Some(selection_set) = field.get_selection_set_mut() {

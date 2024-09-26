@@ -1634,7 +1634,7 @@ impl SelectionSet {
         destination: &mut Vec<Selection>,
         selection_set: &SelectionSet,
     ) -> Result<(), FederationError> {
-        for (_, value) in selection_set.selections.iter() {
+        for value in selection_set.selections.values() {
             match value {
                 Selection::Field(field_selection) => {
                     let selections = match &field_selection.selection_set {
@@ -1722,7 +1722,8 @@ impl SelectionSet {
         let mut sibling_field_key: Option<SelectionKey> = None;
 
         let mutable_selection_map = Arc::make_mut(&mut self.selections);
-        for (key, entry) in mutable_selection_map.iter_mut() {
+        for entry in mutable_selection_map.values_mut() {
+            let key = entry.key();
             match entry {
                 SelectionValue::Field(mut field_selection) => {
                     if field_selection.get().field.name() == &TYPENAME_FIELD
@@ -1883,8 +1884,8 @@ impl SelectionSet {
                 sub_selection_updates.extend(
                     sub_selection_set
                         .selections
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone())),
+                        .values()
+                        .map(|v| (v.key(), v.clone())),
                 );
             }
         }
@@ -1954,9 +1955,9 @@ impl SelectionSet {
         let mut updated_selections = MultiIndexMap::new();
         updated_selections.extend(
             self.selections
-                .iter()
+                .values()
                 .take(index)
-                .map(|(k, v)| (k.clone(), v.clone())),
+                .map(|v| (v.key(), v.clone())),
         );
 
         let mut update_new_selection = |selection| match selection {
@@ -2324,7 +2325,7 @@ impl SelectionSet {
     fn fields_in_set(&self) -> Vec<CollectedFieldInSet> {
         let mut fields = Vec::new();
 
-        for (_key, selection) in self.selections.iter() {
+        for selection in self.selections.values() {
             match selection {
                 Selection::Field(field) => fields.push(CollectedFieldInSet {
                     path: Vec::new(),
@@ -2442,20 +2443,20 @@ impl SelectionSet {
 }
 
 impl IntoIterator for SelectionSet {
-    type Item = <SelectionMap as IntoIterator>::Item;
-    type IntoIter = <SelectionMap as IntoIterator>::IntoIter;
+    type Item = Selection;
+    type IntoIter = selection_map::IntoValues;
 
     fn into_iter(self) -> Self::IntoIter {
-        Arc::unwrap_or_clone(self.selections).into_iter()
+        Arc::unwrap_or_clone(self.selections).into_values()
     }
 }
 
 impl<'a> IntoIterator for &'a SelectionSet {
-    type Item = <&'a SelectionMap as IntoIterator>::Item;
-    type IntoIter = <&'a SelectionMap as IntoIterator>::IntoIter;
+    type Item = &'a Selection;
+    type IntoIter = selection_map::Values<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.selections.as_ref().into_iter()
+        self.selections.as_ref().values()
     }
 }
 
@@ -3156,10 +3157,7 @@ impl DeferNormalizer {
             assigned_labels: IndexSet::default(),
             conditions: IndexMap::default(),
         };
-        let mut stack = selection_set
-            .into_iter()
-            .map(|(_, sel)| sel)
-            .collect::<Vec<_>>();
+        let mut stack = selection_set.into_iter().collect::<Vec<_>>();
         while let Some(selection) = stack.pop() {
             if let Selection::InlineFragment(inline) = selection {
                 if let Some(args) = inline.inline_fragment.data().defer_directive_arguments()? {
@@ -3169,13 +3167,7 @@ impl DeferNormalizer {
                     }
                 }
             }
-            stack.extend(
-                selection
-                    .selection_set()
-                    .into_iter()
-                    .flatten()
-                    .map(|(_, sel)| sel),
-            );
+            stack.extend(selection.selection_set().into_iter().flatten());
         }
         Ok(digest)
     }
@@ -3487,8 +3479,8 @@ impl SelectionSet {
             selections,
         } = self;
         Arc::unwrap_or_clone(selections)
-            .into_iter()
-            .map(|(_, sel)| sel.normalize_defer(normalizer))
+            .into_values()
+            .map(|sel| sel.normalize_defer(normalizer))
             .try_collect()
             .map(|selections| Self {
                 schema,

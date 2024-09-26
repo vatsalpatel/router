@@ -1,9 +1,12 @@
 #![warn(dead_code)]
 use std::borrow::Cow;
-use std::iter::Map;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
-use apollo_compiler::collections::IndexMap;
+use hashbrown::hash_map::DefaultHashBuilder;
+use hashbrown::raw::RawTable;
+use itertools::Itertools;
+use serde::ser::SerializeMap;
 use serde::Serialize;
 
 use crate::error::FederationError;
@@ -28,96 +31,225 @@ use crate::operation::SiblingTypename;
 /// `IndexSet` since key computation is expensive (it involves sorting). This type is in its own
 /// module to prevent code from accidentally mutating the underlying map outside the mutation
 /// API.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
-pub(crate) struct SelectionMap(IndexMap<SelectionKey, Selection>);
+#[derive(Clone)]
+pub(crate) struct SelectionMap {
+    hash_builder: DefaultHashBuilder,
+    table: RawTable<usize>,
+    selections: Vec<Selection>,
+}
+
+impl std::fmt::Debug for SelectionMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for SelectionMap {
+    /// Compare two selection maps. This is order independent.
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && self
+                .values()
+                .all(|left| other.get(&left.key()).is_some_and(|right| left == right))
+    }
+}
+
+impl Eq for SelectionMap {}
+
+impl Serialize for SelectionMap {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.len()))?;
+        for (key, value) in self.iter() {
+            map.serialize_entry(&key, value)?;
+        }
+        map.end()
+    }
+}
+
+impl Default for SelectionMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub(crate) type Values<'a> = std::slice::Iter<'a, Selection>;
+pub(crate) type ValuesMut<'a> = std::slice::IterMut<'a, Selection>;
+pub(crate) type IntoValues = std::vec::IntoIter<Selection>;
 
 impl SelectionMap {
     pub(crate) fn new() -> Self {
-        SelectionMap(IndexMap::default())
+        SelectionMap {
+            hash_builder: Default::default(),
+            table: RawTable::new(),
+            selections: Vec::new(),
+        }
     }
 
     /// Returns the number of selections in the map.
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.selections.len()
     }
 
     /// Returns true if there are no selections in the map.
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.selections.is_empty()
     }
 
     /// Returns the first selection in the map, or None if the map is empty.
     pub(crate) fn first(&self) -> Option<&Selection> {
-        self.0.first().map(|(_key, value)| value)
+        self.selections.first()
+    }
+
+    fn hash(&self, key: &SelectionKey) -> u64 {
+        self.hash_builder.hash_one(key)
     }
 
     /// Returns true if the given key exists in the map.
     pub(crate) fn contains_key(&self, key: &SelectionKey) -> bool {
-        self.0.contains_key(key)
+        let hash = self.hash(key);
+        self.table
+            .find(hash, |selection| self.selections[*selection].key() == *key)
+            .is_some()
     }
 
     /// Returns true if the given key exists in the map.
     pub(crate) fn get(&self, key: &SelectionKey) -> Option<&Selection> {
-        self.0.get(key)
+        let hash = self.hash(key);
+        let index = self
+            .table
+            .get(hash, |selection| self.selections[*selection].key() == *key)?;
+        Some(&self.selections[*index])
     }
 
     pub(crate) fn get_mut(&mut self, key: &SelectionKey) -> Option<SelectionValue> {
-        self.0.get_mut(key).map(SelectionValue::new)
+        let hash = self.hash(key);
+        let index = self
+            .table
+            .get(hash, |selection| self.selections[*selection].key() == *key)?;
+        Some(SelectionValue::new(&mut self.selections[*index]))
     }
 
-    pub(crate) fn insert(&mut self, value: Selection) -> Option<Selection> {
-        self.0.insert(value.key(), value)
+    /// Insert a selection into the map.
+    fn raw_insert(&mut self, hash: u64, value: Selection) -> &mut Selection {
+        let index = self.selections.len();
+
+        self.table.insert(hash, index, |existing| {
+            self.hash_builder
+                .hash_one(&self.selections[*existing].key())
+        });
+
+        self.selections.push(value);
+        &mut self.selections[index]
+    }
+
+    /// Resets and rebuilds the hash table.
+    ///
+    /// Preconditions:
+    /// - The table must have enough capacity for `self.selections.len()` elements.
+    fn rebuild_table_no_grow(&mut self) {
+        assert!(self.table.capacity() >= self.selections.len());
+        self.table.clear();
+        for (index, selection) in self.selections.iter().enumerate() {
+            let hash = self.hash(&selection.key());
+            // SAFETY: Capacity is guaranteed by the assert at the top of the function
+            unsafe {
+                self.table.insert_no_grow(hash, index);
+            }
+        }
+    }
+
+    pub(crate) fn insert(&mut self, value: Selection) {
+        let hash = self.hash(&value.key());
+        self.raw_insert(hash, value);
     }
 
     /// Remove a selection from the map. Returns the selection and its numeric index.
     pub(crate) fn remove(&mut self, key: &SelectionKey) -> Option<(usize, Selection)> {
-        // We specifically use shift_remove() instead of swap_remove() to maintain order.
-        self.0
-            .shift_remove_full(key)
-            .map(|(index, _key, selection)| (index, selection))
+        let hash = self.hash(key);
+        let index = self
+            .table
+            .remove_entry(hash, |selection| self.selections[*selection].key() == *key)?;
+        let selection = self.selections.remove(index);
+        // TODO: adjust indices
+        self.rebuild_table_no_grow();
+        Some((index, selection))
     }
 
     pub(crate) fn retain(&mut self, mut predicate: impl FnMut(&SelectionKey, &Selection) -> bool) {
-        self.0.retain(|k, v| predicate(k, v))
+        self.selections.retain(|selection| {
+            let key = selection.key();
+            predicate(&key, selection)
+        });
+        if self.selections.len() < self.table.len() {
+            self.rebuild_table_no_grow();
+        }
+        assert!(self.selections.len() == self.table.len());
     }
 
     /// Iterate over all selections and selection keys.
-    pub(crate) fn iter(&self) -> indexmap::map::Iter<'_, SelectionKey, Selection> {
-        self.0.iter()
+    #[deprecated = "Prefer values()"]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (SelectionKey, &'_ Selection)> {
+        self.selections.iter().map(|v| (v.key(), v))
     }
 
-    pub(crate) fn iter_mut(&mut self) -> IterMut {
-        self.0.iter_mut().map(|(k, v)| (k, SelectionValue::new(v)))
+    #[deprecated = "Prefer values_mut()"]
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (SelectionKey, SelectionValue<'_>)> {
+        self.selections
+            .iter_mut()
+            .map(|v| (v.key(), SelectionValue::new(v)))
     }
 
     /// Iterate over all selections.
-    pub(crate) fn values(&self) -> indexmap::map::Values<'_, SelectionKey, Selection> {
-        self.0.values()
+    pub(crate) fn values(&self) -> std::slice::Iter<'_, Selection> {
+        self.selections.iter()
     }
 
     /// Iterate over all selections.
-    pub(crate) fn into_values(self) -> indexmap::map::IntoValues<SelectionKey, Selection> {
-        self.0.into_values()
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = SelectionValue<'_>> {
+        self.selections.iter_mut().map(SelectionValue::new)
+    }
+
+    /// Iterate over all selections.
+    pub(crate) fn into_values(self) -> std::vec::IntoIter<Selection> {
+        self.selections.into_iter()
     }
 
     pub(super) fn entry(&mut self, key: SelectionKey) -> Entry {
-        match self.0.entry(key) {
-            indexmap::map::Entry::Occupied(entry) => Entry::Occupied(OccupiedEntry(entry)),
-            indexmap::map::Entry::Vacant(entry) => Entry::Vacant(VacantEntry(entry)),
+        let hash = self.hash(&key);
+        let slot = self
+            .table
+            .find(hash, |selection| self.selections[*selection].key() == key);
+        match slot {
+            Some(occupied) => {
+                let index = unsafe { *occupied.as_ptr() };
+                let selection = &mut self.selections[index];
+                Entry::Occupied(OccupiedEntry(selection))
+            }
+            None => Entry::Vacant(VacantEntry {
+                map: self,
+                hash,
+                key,
+            }),
         }
     }
 
     pub(crate) fn extend(&mut self, other: SelectionMap) {
-        self.0.extend(other.0)
+        for selection in other.into_values() {
+            self.insert(selection);
+        }
     }
 
     pub(crate) fn extend_ref(&mut self, other: &SelectionMap) {
-        self.0
-            .extend(other.iter().map(|(k, v)| (k.clone(), v.clone())))
+        for selection in other.values() {
+            self.insert(selection.clone());
+        }
     }
 
-    pub(crate) fn as_slice(&self) -> &indexmap::map::Slice<SelectionKey, Selection> {
-        self.0.as_slice()
+    pub(crate) fn as_slice(&self) -> &[Selection] {
+        &self.selections
     }
 
     /// Returns the selection set resulting from "recursively" filtering any selection
@@ -164,11 +296,11 @@ impl SelectionMap {
                 }
             })
         }
-        let mut iter = self.0.iter();
+        let mut iter = self.values();
         let mut enumerated = (&mut iter).enumerate();
-        let mut new_map: IndexMap<_, _>;
+        let mut new_map: Self;
         loop {
-            let Some((index, (key, selection))) = enumerated.next() else {
+            let Some((index, selection)) = enumerated.next() else {
                 return Ok(Cow::Borrowed(self));
             };
             let filtered = recur_sub_selections(selection, predicate)?;
@@ -179,23 +311,20 @@ impl SelectionMap {
             }
 
             // Clone the map so far
-            new_map = self.0.as_slice()[..index]
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            new_map = self.as_slice()[..index].iter().cloned().collect();
 
             if keep {
-                new_map.insert(key.clone(), filtered.into_owned());
+                new_map.insert(filtered.into_owned());
             }
             break;
         }
-        for (key, selection) in iter {
+        for selection in iter {
             let filtered = recur_sub_selections(selection, predicate)?;
             if predicate(&filtered)? {
-                new_map.insert(key.clone(), filtered.into_owned());
+                new_map.insert(filtered.into_owned());
             }
         }
-        Ok(Cow::Owned(Self(new_map)))
+        Ok(Cow::Owned(new_map))
     }
 }
 
@@ -211,11 +340,6 @@ where
         map
     }
 }
-
-type IterMut<'a> = Map<
-    indexmap::map::IterMut<'a, SelectionKey, Selection>,
-    fn((&'a SelectionKey, &'a mut Selection)) -> (&'a SelectionKey, SelectionValue<'a>),
->;
 
 /// A mutable reference to a `Selection` value in a `SelectionMap`, which
 /// also disallows changing key-related data (to maintain the invariant that a value's key is
@@ -331,23 +455,27 @@ impl<'a> Entry<'a> {
     }
 }
 
-pub(crate) struct OccupiedEntry<'a>(indexmap::map::OccupiedEntry<'a, SelectionKey, Selection>);
+pub(crate) struct OccupiedEntry<'a>(&'a mut Selection);
 
 impl<'a> OccupiedEntry<'a> {
     pub(crate) fn get(&self) -> &Selection {
-        self.0.get()
+        self.0
     }
 
     pub(crate) fn into_mut(self) -> SelectionValue<'a> {
-        SelectionValue::new(self.0.into_mut())
+        SelectionValue::new(self.0)
     }
 }
 
-pub(crate) struct VacantEntry<'a>(indexmap::map::VacantEntry<'a, SelectionKey, Selection>);
+pub(crate) struct VacantEntry<'a> {
+    map: &'a mut SelectionMap,
+    hash: u64,
+    key: SelectionKey,
+}
 
 impl<'a> VacantEntry<'a> {
     pub(crate) fn key(&self) -> &SelectionKey {
-        self.0.key()
+        &self.key
     }
 
     pub(crate) fn insert(self, value: Selection) -> Result<SelectionValue<'a>, FederationError> {
@@ -359,16 +487,33 @@ impl<'a> VacantEntry<'a> {
                 ),
             }
             .into());
-        }
-        Ok(SelectionValue::new(self.0.insert(value)))
+        };
+        Ok(SelectionValue::new(self.map.raw_insert(self.hash, value)))
     }
 }
 
 impl IntoIterator for SelectionMap {
-    type Item = <IndexMap<SelectionKey, Selection> as IntoIterator>::Item;
-    type IntoIter = <IndexMap<SelectionKey, Selection> as IntoIterator>::IntoIter;
+    type Item = (SelectionKey, Selection);
+    type IntoIter =
+        std::iter::Map<std::vec::IntoIter<Selection>, fn(Selection) -> (SelectionKey, Selection)>;
 
     fn into_iter(self) -> Self::IntoIter {
-        <IndexMap<SelectionKey, Selection> as IntoIterator>::into_iter(self.0)
+        self.selections
+            .into_iter()
+            .map(|selection| (selection.key(), selection))
+    }
+}
+
+impl<'a> IntoIterator for &'a SelectionMap {
+    type Item = (SelectionKey, &'a Selection);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, Selection>,
+        fn(&'a Selection) -> (SelectionKey, &'a Selection),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.selections
+            .iter()
+            .map(|selection| (selection.key(), selection))
     }
 }

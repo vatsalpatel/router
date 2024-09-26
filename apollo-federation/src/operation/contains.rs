@@ -169,7 +169,7 @@ impl SelectionSet {
                 continue;
             }
 
-            let Some(self_selection) = self.selections.get(key) else {
+            let Some(self_selection) = self.selections.get(&key) else {
                 return Containment::NotContained;
             };
 

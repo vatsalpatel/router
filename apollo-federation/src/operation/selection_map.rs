@@ -3,9 +3,9 @@ use std::borrow::Cow;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
+use apollo_compiler::Name;
 use hashbrown::hash_map::DefaultHashBuilder;
 use hashbrown::raw::RawTable;
-use itertools::Itertools;
 use serde::ser::SerializeMap;
 use serde::Serialize;
 
@@ -15,11 +15,74 @@ use crate::operation::field_selection::FieldSelection;
 use crate::operation::fragment_spread_selection::FragmentSpreadSelection;
 use crate::operation::inline_fragment_selection::InlineFragmentSelection;
 use crate::operation::DirectiveList;
-use crate::operation::HasSelectionKey;
 use crate::operation::Selection;
-use crate::operation::SelectionKey;
+use crate::operation::SelectionId;
 use crate::operation::SelectionSet;
 use crate::operation::SiblingTypename;
+
+/// A selection "key" (unrelated to the federation `@key` directive) is an identifier of a selection
+/// (field, inline fragment, or fragment spread) that is used to determine whether two selections
+/// can be merged.
+///
+/// In order to merge two selections they need to
+/// * reference the same field/inline fragment
+/// * specify the same directives
+/// * directives have to be applied in the same order
+/// * directive arguments order does not matter (they get automatically sorted by their names).
+/// * selection cannot specify @defer directive
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub(crate) enum SelectionKey {
+    Field {
+        /// The field alias (if specified) or field name in the resulting selection set.
+        response_name: Name,
+        /// directives applied on the field
+        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
+        directives: DirectiveList,
+    },
+    FragmentSpread {
+        /// The name of the fragment.
+        fragment_name: Name,
+        /// Directives applied on the fragment spread (does not contain @defer).
+        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
+        directives: DirectiveList,
+    },
+    InlineFragment {
+        /// The optional type condition of the fragment.
+        type_condition: Option<Name>,
+        /// Directives applied on the fragment spread (does not contain @defer).
+        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
+        directives: DirectiveList,
+    },
+    Defer {
+        /// Unique selection ID used to distinguish deferred fragment spreads that cannot be merged.
+        #[cfg_attr(not(feature = "snapshot_tracing"), serde(skip))]
+        deferred_id: SelectionId,
+    },
+}
+
+impl SelectionKey {
+    /// Returns true if the selection key is `__typename` *without directives*.
+    #[deprecated = "Use the Selection type instead"]
+    pub(crate) fn is_typename_field(&self) -> bool {
+        matches!(self, SelectionKey::Field { response_name, directives } if *response_name == super::TYPENAME_FIELD && directives.is_empty())
+    }
+
+    /// Create a selection key for a specific field name.
+    ///
+    /// This is available for tests only as selection keys should not normally be created outside of
+    /// `HasSelectionKey::key`.
+    #[cfg(test)]
+    pub(crate) fn field_name(name: &str) -> Self {
+        SelectionKey::Field {
+            response_name: Name::new(name).unwrap(),
+            directives: Default::default(),
+        }
+    }
+}
+
+pub(crate) trait HasSelectionKey {
+    fn key(&self) -> SelectionKey;
+}
 
 /// A "normalized" selection map is an optimized representation of a selection set which does
 /// not contain selections with the same selection "key". Selections that do have the same key

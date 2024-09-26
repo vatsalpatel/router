@@ -264,72 +264,11 @@ mod selection_map;
 
 pub(crate) use selection_map::FieldSelectionValue;
 pub(crate) use selection_map::FragmentSpreadSelectionValue;
+pub(crate) use selection_map::HasSelectionKey;
 pub(crate) use selection_map::InlineFragmentSelectionValue;
+pub(crate) use selection_map::SelectionKey;
 pub(crate) use selection_map::SelectionMap;
 pub(crate) use selection_map::SelectionValue;
-
-/// A selection "key" (unrelated to the federation `@key` directive) is an identifier of a selection
-/// (field, inline fragment, or fragment spread) that is used to determine whether two selections
-/// can be merged.
-///
-/// In order to merge two selections they need to
-/// * reference the same field/inline fragment
-/// * specify the same directives
-/// * directives have to be applied in the same order
-/// * directive arguments order does not matter (they get automatically sorted by their names).
-/// * selection cannot specify @defer directive
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub(crate) enum SelectionKey {
-    Field {
-        /// The field alias (if specified) or field name in the resulting selection set.
-        response_name: Name,
-        /// directives applied on the field
-        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
-        directives: DirectiveList,
-    },
-    FragmentSpread {
-        /// The name of the fragment.
-        fragment_name: Name,
-        /// Directives applied on the fragment spread (does not contain @defer).
-        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
-        directives: DirectiveList,
-    },
-    InlineFragment {
-        /// The optional type condition of the fragment.
-        type_condition: Option<Name>,
-        /// Directives applied on the fragment spread (does not contain @defer).
-        #[serde(serialize_with = "crate::display_helpers::serialize_as_string")]
-        directives: DirectiveList,
-    },
-    Defer {
-        /// Unique selection ID used to distinguish deferred fragment spreads that cannot be merged.
-        #[cfg_attr(not(feature = "snapshot_tracing"), serde(skip))]
-        deferred_id: SelectionId,
-    },
-}
-
-impl SelectionKey {
-    /// Returns true if the selection key is `__typename` *without directives*.
-    pub(crate) fn is_typename_field(&self) -> bool {
-        matches!(self, SelectionKey::Field { response_name, directives } if *response_name == TYPENAME_FIELD && directives.is_empty())
-    }
-
-    /// Create a selection key for a specific field name.
-    ///
-    /// This is available for tests only as selection keys should not normally be created outside of
-    /// `HasSelectionKey::key`.
-    #[cfg(test)]
-    pub(crate) fn field_name(name: &str) -> Self {
-        SelectionKey::Field {
-            response_name: Name::new(name).unwrap(),
-            directives: Default::default(),
-        }
-    }
-}
-
-pub(crate) trait HasSelectionKey {
-    fn key(&self) -> SelectionKey;
-}
 
 /// An analogue of the apollo-compiler type `Selection` that stores our other selection analogues
 /// instead of the apollo-compiler types.

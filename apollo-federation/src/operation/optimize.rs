@@ -269,7 +269,7 @@ impl SelectionSet {
             .selections
             .values()
             .map(|v| {
-                if let Some(other_v) = other.selections.get(&v.key()) {
+                if let Some(other_v) = other.selections.get(v.key()) {
                     v.minus(other_v)
                 } else {
                     Ok(Some(v.clone()))
@@ -298,7 +298,7 @@ impl SelectionSet {
             .selections
             .values()
             .map(|v| {
-                if let Some(other_v) = other.selections.get(&v.key()) {
+                if let Some(other_v) = other.selections.get(v.key()) {
                     v.intersection(other_v)
                 } else {
                     Ok(None)
@@ -412,7 +412,7 @@ impl FieldsConflictValidator {
         for selection_set in level {
             for field_selection in selection_set.field_selections() {
                 let response_name = field_selection.field.response_name();
-                let at_response_name = at_level.entry(response_name).or_default();
+                let at_response_name = at_level.entry(response_name.clone()).or_default();
                 let entry = at_response_name
                     .entry(field_selection.field.clone())
                     .or_default();
@@ -442,7 +442,7 @@ impl FieldsConflictValidator {
 
     fn for_field<'v>(&'v self, field: &Field) -> impl Iterator<Item = Arc<Self>> + 'v {
         self.by_response_name
-            .get(&field.response_name())
+            .get(field.response_name())
             .into_iter()
             .flat_map(|by_response_name| by_response_name.values())
             .flatten()
@@ -3501,9 +3501,9 @@ mod tests {
                 }
 
                 Some((first, rest)) => {
-                    let result = Arc::make_mut(&mut ss.selections).get_mut(&SelectionKey::Field {
-                        response_name: (*first).clone(),
-                        directives: Default::default(),
+                    let result = Arc::make_mut(&mut ss.selections).get_mut(SelectionKey::Field {
+                        response_name: first,
+                        directives: &Default::default(),
                     });
                     let Some(mut value) = result else {
                         return Err(FederationError::internal("No matching field found"));

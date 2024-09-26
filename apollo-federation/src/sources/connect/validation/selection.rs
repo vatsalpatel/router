@@ -1,7 +1,6 @@
 use std::iter::once;
 use std::ops::Range;
 
-use apollo_compiler::ast::Argument;
 use apollo_compiler::ast::FieldDefinition;
 use apollo_compiler::collections::IndexMap;
 use apollo_compiler::collections::IndexSet;
@@ -26,8 +25,10 @@ use crate::sources::connect::expand::visitors::FieldVisitor;
 use crate::sources::connect::expand::visitors::GroupVisitor;
 use crate::sources::connect::json_selection::NamedSelection;
 use crate::sources::connect::json_selection::PathList;
+use crate::sources::connect::json_selection::Ranged;
 use crate::sources::connect::spec::schema::CONNECT_SELECTION_ARGUMENT_NAME;
 use crate::sources::connect::validation::coordinates::connect_directive_http_body_coordinate;
+use crate::sources::connect::validation::graphql::GraphQLString;
 use crate::sources::connect::validation::graphql::SchemaInfo;
 use crate::sources::connect::validation::selection::visitor::visit;
 use crate::sources::connect::validation::selection::visitor::SelectionPart;
@@ -44,11 +45,16 @@ pub(super) fn validate_selection(
     schema: &SchemaInfo,
     seen_fields: &mut IndexSet<(Name, Name)>,
 ) -> Option<Message> {
-    let (selection_value, json_selection) =
-        match get_json_selection(connect_directive, parent_type, &field.name, &schema.sources) {
-            Ok(selection) => selection,
-            Err(err) => return Some(err),
-        };
+    let (selection_value, json_selection) = match get_json_selection(
+        connect_directive,
+        parent_type,
+        &field.name,
+        &schema.sources,
+        schema,
+    ) {
+        Ok(selection) => selection,
+        Err(err) => return Some(err),
+    };
 
     let Some(return_type) = schema.get_object(field.ty.inner_named_type()) else {
         // TODO: Validate scalar return types
@@ -122,11 +128,10 @@ fn get_json_selection<'a>(
     object: &Node<ObjectType>,
     field_name: &Name,
     source_map: &SourceMap,
+    schema_info: &SchemaInfo,
 ) -> Result<(&'a Node<Value>, JSONSelection), Message> {
     let selection_arg = connect_directive
-        .arguments
-        .iter()
-        .find(|arg| arg.name == CONNECT_SELECTION_ARGUMENT_NAME)
+        .specified_argument_by_name(CONNECT_SELECTION_ARGUMENT_NAME.as_str())
         .ok_or_else(|| Message {
             code: Code::GraphQLError,
             message: format!(
@@ -142,34 +147,45 @@ fn get_json_selection<'a>(
                 .into_iter()
                 .collect(),
         })?;
-    let selection_str = require_value_is_str(
-        &selection_arg.value,
-        &connect_directive_selection_coordinate(&connect_directive.name, object, field_name),
-        source_map,
-    )?;
-
-    let (_rest, selection) = JSONSelection::parse(selection_str).map_err(|err| Message {
-        code: Code::InvalidJsonSelection,
+    let selection_str = GraphQLString::new(selection_arg, source_map).map_err(|_| Message {
+        code: Code::GraphQLError,
         message: format!(
-            "{coordinate} is not a valid JSONSelection: {err}",
+            "The value for {coordinate} must be a string.",
             coordinate =
-                connect_directive_selection_coordinate(&connect_directive.name, object, field_name),
+                connect_directive_selection_coordinate(&connect_directive.name, object, field_name)
         ),
         locations: selection_arg
-            .value
             .line_column_range(source_map)
             .into_iter()
             .collect(),
     })?;
 
+    let (_rest, selection) =
+        JSONSelection::parse(selection_str.as_str()).map_err(|err| Message {
+            code: Code::InvalidJsonSelection,
+            message: format!(
+                "{coordinate} is not a valid JSONSelection: {err}",
+                coordinate = connect_directive_selection_coordinate(
+                    &connect_directive.name,
+                    object,
+                    field_name
+                ),
+            ),
+            locations: selection_arg
+                .line_column_range(source_map)
+                .into_iter()
+                .collect(),
+        })?;
+
     visit(
         &selection,
         ArrowMethodValidator {
+            schema_info,
             source_map,
             connect_directive,
+            selection_str: &selection_str,
             object,
             field_name,
-            selection_arg,
         },
     )?;
 
@@ -185,28 +201,28 @@ fn get_json_selection<'a>(
                 ),
             ),
             locations: selection_arg
-                .value
                 .line_column_range(source_map)
                 .into_iter()
                 .collect(),
         });
     }
 
-    Ok((&selection_arg.value, selection))
+    Ok((&selection_arg, selection))
 }
 
 struct ArrowMethodValidator<'a> {
+    schema_info: &'a SchemaInfo<'a>,
     source_map: &'a SourceMap,
     connect_directive: &'a Node<Directive>,
+    selection_str: &'a GraphQLString<'a>,
     object: &'a Node<ObjectType>,
     field_name: &'a Name,
-    selection_arg: &'a Node<Argument>,
 }
 
 // TODO: validation requires significant knowledge about arrow methods - need a better mechanism
 //   to provide it
 lazy_static! {
-    static ref ARROW_METHODS: IndexMap<&'static str, Option<usize>> = {
+    static ref ARROW_METHOD_ARITIES: IndexMap<&'static str, Option<usize>> = {
         let mut arrow_methods = IndexMap::default();
         arrow_methods.insert("echo", Some(1));
         arrow_methods.insert("map", Some(1));
@@ -225,7 +241,16 @@ impl<'a> Visitor for ArrowMethodValidator<'a> {
 
     fn visit(&mut self, part: &SelectionPart) -> Result<(), Self::Error> {
         if let SelectionPart::PathList(PathList::Method(name, args, _)) = part {
-            match ARROW_METHODS.get(name.as_str()) {
+            let locations = name
+                .range()
+                .and_then(|range| {
+                    self.selection_str
+                        .line_col_for_subslice(range, self.schema_info)
+                })
+                .into_iter()
+                .collect();
+
+            match ARROW_METHOD_ARITIES.get(name.as_str()) {
                 None => {
                     return Err(Message {
                         code: Code::UnknownMethod,
@@ -238,13 +263,7 @@ impl<'a> Visitor for ArrowMethodValidator<'a> {
                             ),
                             name = name.as_str(),
                         ),
-                        // TODO: convert the offset range of the method name to line/column
-                        locations: self
-                            .selection_arg
-                            .value
-                            .line_column_range(self.source_map)
-                            .into_iter()
-                            .collect(),
+                        locations,
                     });
                 }
                 Some(Some(arity)) => {
@@ -261,13 +280,7 @@ impl<'a> Visitor for ArrowMethodValidator<'a> {
                                 ),
                                 name = name.as_str(),
                             ),
-                            // TODO: convert the offset range of the method name to line/column
-                            locations: self
-                                .selection_arg
-                                .value
-                                .line_column_range(self.source_map)
-                                .into_iter()
-                                .collect(),
+                            locations
                         });
                     }
                 }

@@ -36,7 +36,6 @@ use crate::operation::ArgumentList;
 use crate::operation::ContainmentOptions;
 use crate::operation::DirectiveList;
 use crate::operation::Field;
-use crate::operation::FieldData;
 use crate::operation::InlineFragment;
 use crate::operation::InlineFragmentData;
 use crate::operation::InlineFragmentSelection;
@@ -587,7 +586,6 @@ impl FetchDependencyGraphNodePath {
 
     fn advance_field_type(&self, element: &Field) -> Result<IndexSet<Name>, FederationError> {
         if !element
-            .data()
             .output_base_type()
             .map(|base_type| base_type.is_composite_type())
             .unwrap_or_default()
@@ -2972,7 +2970,7 @@ fn operation_for_entities_fetch(
     let entities = FieldDefinitionPosition::Object(query_type.field(ENTITIES_QUERY.clone()));
 
     let entities_call = Selection::from_element(
-        OpPathElement::Field(Field::new(FieldData {
+        OpPathElement::Field(Field {
             schema: subgraph_schema.clone(),
             field_position: entities,
             alias: None,
@@ -2982,7 +2980,7 @@ fn operation_for_entities_fetch(
             )),
             directives: Default::default(),
             sibling_typename: None,
-        })),
+        }),
         Some(selection_set),
     )?;
 
@@ -4789,7 +4787,7 @@ mod tests {
         object: apollo_compiler::Name,
         field: apollo_compiler::Name,
     ) -> OpPathElement {
-        OpPathElement::Field(super::Field::new(super::FieldData {
+        OpPathElement::Field(super::Field {
             schema: schema.clone(),
             field_position: ObjectTypeDefinitionPosition::new(object)
                 .field(field)
@@ -4798,7 +4796,7 @@ mod tests {
             arguments: Default::default(),
             directives: Default::default(),
             sibling_typename: None,
-        }))
+        })
     }
 
     fn interface_field_element(
@@ -4806,7 +4804,7 @@ mod tests {
         interface: apollo_compiler::Name,
         field: apollo_compiler::Name,
     ) -> OpPathElement {
-        OpPathElement::Field(super::Field::new(super::FieldData {
+        OpPathElement::Field(super::Field {
             schema: schema.clone(),
             field_position: InterfaceTypeDefinitionPosition::new(interface)
                 .field(field)
@@ -4815,7 +4813,7 @@ mod tests {
             arguments: Default::default(),
             directives: Default::default(),
             sibling_typename: None,
-        }))
+        })
     }
 
     fn inline_fragment_element(

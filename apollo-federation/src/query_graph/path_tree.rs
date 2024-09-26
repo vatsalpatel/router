@@ -469,7 +469,6 @@ mod tests {
     use crate::error::FederationError;
     use crate::operation::normalize_operation;
     use crate::operation::Field;
-    use crate::operation::FieldData;
     use crate::query_graph::build_query_graph::build_query_graph;
     use crate::query_graph::condition_resolver::ConditionResolution;
     use crate::query_graph::graph_path::OpGraphPath;
@@ -535,7 +534,7 @@ mod tests {
                 .unwrap();
 
             // build the trigger for the edge
-            let data = FieldData {
+            let field = Field {
                 schema: query_graph.schema().unwrap().clone(),
                 field_position: field_def.clone(),
                 alias: None,
@@ -543,7 +542,7 @@ mod tests {
                 directives: Default::default(),
                 sibling_typename: None,
             };
-            let trigger = OpGraphPathTrigger::OpPathElement(OpPathElement::Field(Field::new(data)));
+            let trigger = OpGraphPathTrigger::OpPathElement(OpPathElement::Field(field));
 
             // add the edge to the path
             graph_path = graph_path

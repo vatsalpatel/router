@@ -859,8 +859,6 @@ pub(crate) use field_selection::FieldSelection;
 pub(crate) use field_selection::SiblingTypename;
 
 mod fragment_spread_selection {
-    use std::ops::Deref;
-
     use apollo_compiler::Name;
     use serde::Serialize;
 
@@ -926,7 +924,7 @@ mod fragment_spread_selection {
         fn key(&self) -> SelectionKey<'_> {
             if is_deferred_selection(&self.directives) {
                 SelectionKey::Defer {
-                    deferred_id: self.selection_id.clone(),
+                    deferred_id: self.selection_id,
                 }
             } else {
                 SelectionKey::FragmentSpread {

@@ -1,4 +1,3 @@
-#![warn(dead_code)]
 use std::borrow::Cow;
 use std::hash::BuildHasher;
 use std::sync::Arc;
@@ -243,6 +242,8 @@ impl SelectionMap {
         self.selections.first()
     }
 
+    /// Computes the hash of a selection key; this borrows the whole map,
+    /// so mutating methods might want to use `hash_builder.hash_one` directly.
     fn hash(&self, key: SelectionKey) -> u64 {
         self.hash_builder.hash_one(key)
     }
@@ -264,7 +265,7 @@ impl SelectionMap {
         Some(&self.selections[*index])
     }
 
-    pub(crate) fn get_mut(&mut self, key: SelectionKey<'_>) -> Option<SelectionValue> {
+    pub(crate) fn get_mut(&mut self, key: SelectionKey<'_>) -> Option<SelectionValue<'_>> {
         let hash = self.hash(key);
         let index = self
             .table
@@ -276,6 +277,8 @@ impl SelectionMap {
     fn raw_insert(&mut self, hash: u64, value: Selection) -> &mut Selection {
         let index = self.selections.len();
 
+        // `insert` overwrites a selection without running `Drop`: because
+        // we only store an integer which is `Copy`, this works out fine
         self.table.insert(hash, index, |existing| {
             self.hash_builder.hash_one(self.selections[*existing].key())
         });
@@ -337,6 +340,9 @@ impl SelectionMap {
             predicate(key, selection)
         });
         if self.selections.len() < self.table.len() {
+            // In theory, we could track which keys were removed, and adjust the indices based on
+            // that, but it's very tricky and it might not even be faster than just resetting the
+            // whole map.
             self.rebuild_table_no_grow();
         }
         assert!(self.selections.len() == self.table.len());
@@ -492,7 +498,7 @@ pub(crate) enum SelectionValue<'a> {
 }
 
 impl<'a> SelectionValue<'a> {
-    pub(crate) fn new(selection: &'a mut Selection) -> Self {
+    fn new(selection: &'a mut Selection) -> Self {
         match selection {
             Selection::Field(field_selection) => {
                 SelectionValue::Field(FieldSelectionValue::new(field_selection))
@@ -514,19 +520,11 @@ impl<'a> SelectionValue<'a> {
         }
     }
 
-    pub(super) fn directives(&self) -> &'_ DirectiveList {
+    pub(super) fn get_selection_set_mut(&mut self) -> Option<&'_ mut SelectionSet> {
         match self {
-            Self::Field(field) => &field.get().field.directives,
-            Self::FragmentSpread(frag) => &frag.get().spread.directives,
-            Self::InlineFragment(frag) => &frag.get().inline_fragment.directives,
-        }
-    }
-
-    pub(super) fn get_selection_set_mut(&mut self) -> Option<&mut SelectionSet> {
-        match self {
-            Self::Field(field) => field.get_selection_set_mut().as_mut(),
-            Self::FragmentSpread(spread) => Some(spread.get_selection_set_mut()),
-            Self::InlineFragment(inline) => Some(inline.get_selection_set_mut()),
+            SelectionValue::Field(field) => field.get_selection_set_mut(),
+            SelectionValue::FragmentSpread(frag) => Some(frag.get_selection_set_mut()),
+            SelectionValue::InlineFragment(frag) => Some(frag.get_selection_set_mut()),
         }
     }
 }
@@ -547,8 +545,8 @@ impl<'a> FieldSelectionValue<'a> {
         Arc::make_mut(self.0).field.sibling_typename_mut()
     }
 
-    pub(crate) fn get_selection_set_mut(&mut self) -> &mut Option<SelectionSet> {
-        &mut Arc::make_mut(self.0).selection_set
+    pub(crate) fn get_selection_set_mut(&mut self) -> Option<&mut SelectionSet> {
+        Arc::make_mut(self.0).selection_set.as_mut()
     }
 }
 
@@ -560,12 +558,12 @@ impl<'a> FragmentSpreadSelectionValue<'a> {
         Self(fragment_spread_selection)
     }
 
-    pub(crate) fn get_selection_set_mut(&mut self) -> &mut SelectionSet {
-        &mut Arc::make_mut(self.0).selection_set
-    }
-
     pub(crate) fn get(&self) -> &Arc<FragmentSpreadSelection> {
         self.0
+    }
+
+    pub(crate) fn get_selection_set_mut(&mut self) -> &mut SelectionSet {
+        &mut Arc::make_mut(self.0).selection_set
     }
 }
 

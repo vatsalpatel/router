@@ -879,55 +879,8 @@ mod fragment_spread_selection {
     /// An analogue of the apollo-compiler type `FragmentSpread` with these changes:
     /// - Stores the schema (may be useful for directives).
     /// - Encloses collection types in `Arc`s to facilitate cheaper cloning.
-    #[derive(Clone, Serialize)]
-    pub(crate) struct FragmentSpread {
-        data: FragmentSpreadData,
-    }
-
-    impl std::fmt::Debug for FragmentSpread {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.data.fmt(f)
-        }
-    }
-
-    impl PartialEq for FragmentSpread {
-        fn eq(&self, other: &Self) -> bool {
-            self.key() == other.key()
-        }
-    }
-
-    impl Eq for FragmentSpread {}
-
-    impl Deref for FragmentSpread {
-        type Target = FragmentSpreadData;
-
-        fn deref(&self) -> &Self::Target {
-            &self.data
-        }
-    }
-
-    impl FragmentSpread {
-        pub(crate) fn new(data: FragmentSpreadData) -> Self {
-            Self { data }
-        }
-
-        pub(crate) fn data(&self) -> &FragmentSpreadData {
-            &self.data
-        }
-
-        pub(super) fn directives_mut(&mut self) -> &mut DirectiveList {
-            &mut self.data.directives
-        }
-    }
-
-    impl HasSelectionKey for FragmentSpread {
-        fn key(&self) -> SelectionKey<'_> {
-            self.data.key()
-        }
-    }
-
     #[derive(Debug, Clone, Serialize)]
-    pub(crate) struct FragmentSpreadData {
+    pub(crate) struct FragmentSpread {
         #[serde(skip)]
         pub(crate) schema: ValidFederationSchema,
         pub(crate) fragment_name: Name,
@@ -946,7 +899,21 @@ mod fragment_spread_selection {
         pub(crate) selection_id: SelectionId,
     }
 
-    impl HasSelectionKey for FragmentSpreadData {
+    impl PartialEq for FragmentSpread {
+        fn eq(&self, other: &Self) -> bool {
+            self.key() == other.key()
+        }
+    }
+
+    impl Eq for FragmentSpread {}
+
+    impl FragmentSpread {
+        pub(super) fn directives_mut(&mut self) -> &mut DirectiveList {
+            &mut self.directives
+        }
+    }
+
+    impl HasSelectionKey for FragmentSpread {
         fn key(&self) -> SelectionKey<'_> {
             if is_deferred_selection(&self.directives) {
                 SelectionKey::Defer {
@@ -963,16 +930,15 @@ mod fragment_spread_selection {
 }
 
 pub(crate) use fragment_spread_selection::FragmentSpread;
-pub(crate) use fragment_spread_selection::FragmentSpreadData;
 pub(crate) use fragment_spread_selection::FragmentSpreadSelection;
 
 impl FragmentSpreadSelection {
     /// Copies fragment spread selection and assigns it a new unique selection ID.
     pub(crate) fn with_unique_id(&self) -> Self {
-        let mut data = self.spread.data().clone();
-        data.selection_id = SelectionId::new();
+        let mut spread = self.spread.clone();
+        spread.selection_id = SelectionId::new();
         Self {
-            spread: FragmentSpread::new(data),
+            spread,
             selection_set: self.selection_set.clone(),
         }
     }
@@ -986,9 +952,9 @@ impl FragmentSpreadSelection {
         fragment_spread: &executable::FragmentSpread,
         fragment: &Node<Fragment>,
     ) -> Result<FragmentSpreadSelection, FederationError> {
-        let spread_data = FragmentSpreadData::from_fragment(fragment, &fragment_spread.directives);
+        let spread = FragmentSpread::from_fragment(fragment, &fragment_spread.directives);
         Ok(FragmentSpreadSelection {
-            spread: FragmentSpread::new(spread_data),
+            spread,
             selection_set: fragment.selection_set.clone(),
         })
     }
@@ -997,9 +963,9 @@ impl FragmentSpreadSelection {
         fragment: &Node<Fragment>,
         directives: &executable::DirectiveList,
     ) -> Self {
-        let spread_data = FragmentSpreadData::from_fragment(fragment, directives);
+        let spread = FragmentSpread::from_fragment(fragment, directives);
         Self {
-            spread: FragmentSpread::new(spread_data),
+            spread,
             selection_set: fragment.selection_set.clone(),
         }
     }
@@ -1040,12 +1006,12 @@ impl FragmentSpreadSelection {
     }
 }
 
-impl FragmentSpreadData {
+impl FragmentSpread {
     pub(crate) fn from_fragment(
         fragment: &Node<Fragment>,
         spread_directives: &executable::DirectiveList,
-    ) -> FragmentSpreadData {
-        FragmentSpreadData {
+    ) -> FragmentSpread {
+        FragmentSpread {
             schema: fragment.schema.clone(),
             fragment_name: fragment.name.clone(),
             type_condition_position: fragment.type_condition_position.clone(),
@@ -3186,9 +3152,9 @@ impl FragmentSpread {
     }
 
     fn without_defer(&self, filter: DeferFilter<'_>) -> Result<Self, FederationError> {
-        let mut data = self.data().clone();
-        filter.remove_defer(&mut data.directives, data.schema.schema());
-        Ok(Self::new(data))
+        let mut without_defer = self.clone();
+        filter.remove_defer(&mut without_defer.directives, without_defer.schema.schema());
+        Ok(without_defer)
     }
 }
 

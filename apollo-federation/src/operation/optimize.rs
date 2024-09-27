@@ -682,7 +682,7 @@ impl FragmentRestrictionAtType {
     fn is_useless(&self) -> bool {
         match self.selections.selections.as_slice().split_first() {
             None => true,
-            Some((first, rest)) => rest.is_empty() && first.key().is_typename_field(),
+            Some((first, rest)) => rest.is_empty() && first.is_typename_field(),
         }
     }
 }

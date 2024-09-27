@@ -405,6 +405,15 @@ impl Selection {
         }
     }
 
+    /// Returns true if the selection key is `__typename` *without directives*.
+    pub(crate) fn is_typename_field(&self) -> bool {
+        if let Selection::Field(field) = self {
+            *field.field.response_name() == TYPENAME_FIELD && field.field.directives.is_empty()
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn conditions(&self) -> Result<Conditions, FederationError> {
         let self_conditions = Conditions::from_directives(self.directives())?;
         if let Conditions::Boolean(false) = self_conditions {

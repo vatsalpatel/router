@@ -140,12 +140,6 @@ impl OwnedSelectionKey {
 }
 
 impl<'a> SelectionKey<'a> {
-    /// Returns true if the selection key is `__typename` *without directives*.
-    #[deprecated = "Use the Selection type instead"]
-    pub(crate) fn is_typename_field(self) -> bool {
-        matches!(self, SelectionKey::Field { response_name, directives } if *response_name == super::TYPENAME_FIELD && directives.is_empty())
-    }
-
     /// Create a selection key for a specific field name.
     ///
     /// This is available for tests only as selection keys should not normally be created outside of

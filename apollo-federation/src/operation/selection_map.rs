@@ -217,10 +217,8 @@ impl Default for SelectionMap {
 }
 
 pub(crate) type Values<'a> = std::slice::Iter<'a, Selection>;
-pub(crate) type ValuesMut<'a> = std::iter::Map<
-    std::slice::IterMut<'a, Selection>,
-    fn(&'a mut Selection) -> SelectionValue<'a>,
->;
+pub(crate) type ValuesMut<'a> =
+    std::iter::Map<std::slice::IterMut<'a, Selection>, fn(&'a mut Selection) -> SelectionValue<'a>>;
 pub(crate) type IntoValues = std::vec::IntoIter<Selection>;
 
 impl SelectionMap {

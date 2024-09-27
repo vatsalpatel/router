@@ -37,7 +37,6 @@ use crate::operation::ContainmentOptions;
 use crate::operation::DirectiveList;
 use crate::operation::Field;
 use crate::operation::InlineFragment;
-use crate::operation::InlineFragmentData;
 use crate::operation::InlineFragmentSelection;
 use crate::operation::Operation;
 use crate::operation::Selection;
@@ -3915,13 +3914,13 @@ fn wrap_selection_with_type_and_conditions<T>(
         // PORT_NOTE: JS code looks for type condition in the wrapping type's schema based on
         // the name of wrapping type. Not sure why.
         return wrap_in_fragment(
-            InlineFragment::new(InlineFragmentData {
+            InlineFragment {
                 schema: supergraph_schema.clone(),
                 parent_type_position: wrapping_type.clone(),
                 type_condition_position: Some(type_condition.clone()),
                 directives: Default::default(), // None
                 selection_id: SelectionId::new(),
-            }),
+            },
             initial,
         );
     }
@@ -3942,13 +3941,13 @@ fn wrap_selection_with_type_and_conditions<T>(
             .into()],
         };
         wrap_in_fragment(
-            InlineFragment::new(InlineFragmentData {
+            InlineFragment {
                 schema: supergraph_schema.clone(),
                 parent_type_position: wrapping_type.clone(),
                 type_condition_position: Some(type_condition.clone()),
                 directives: [directive].into_iter().collect(),
                 selection_id: SelectionId::new(),
-            }),
+            },
             acc,
         )
     })
@@ -4828,13 +4827,13 @@ mod tests {
             .unwrap();
         let type_condition =
             type_condition_name.map(|n| schema.get_type(n).unwrap().try_into().unwrap());
-        OpPathElement::InlineFragment(super::InlineFragment::new(InlineFragmentData {
+        OpPathElement::InlineFragment(InlineFragment {
             schema: schema.clone(),
             parent_type_position: parent_type,
             type_condition_position: type_condition,
             directives: Default::default(),
             selection_id: SelectionId::new(),
-        }))
+        })
     }
 
     fn to_string(response_path: &[FetchDataPathElement]) -> String {

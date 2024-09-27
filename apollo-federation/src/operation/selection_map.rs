@@ -10,7 +10,6 @@ use serde::ser::SerializeSeq;
 use serde::Serialize;
 
 use crate::error::FederationError;
-use crate::error::SingleFederationError::Internal;
 use crate::operation::field_selection::FieldSelection;
 use crate::operation::fragment_spread_selection::FragmentSpreadSelection;
 use crate::operation::inline_fragment_selection::InlineFragmentSelection;
@@ -155,7 +154,7 @@ impl<'a> SelectionKey<'a> {
     pub(crate) fn field_name(name: &'a Name) -> Self {
         static EMPTY_LIST: DirectiveList = DirectiveList::new();
         SelectionKey::Field {
-            response_name: &name,
+            response_name: name,
             directives: &EMPTY_LIST,
         }
     }
@@ -165,16 +164,14 @@ pub(crate) trait HasSelectionKey {
     fn key(&self) -> SelectionKey<'_>;
 }
 
-/// A "normalized" selection map is an optimized representation of a selection set which does
-/// not contain selections with the same selection "key". Selections that do have the same key
-/// are  merged during the normalization process. By storing a selection set as a map, we can
-/// efficiently merge/join multiple selection sets.
+/// A selection map is the underlying representation of a selection set. It contains an ordered
+/// list of selections with unique selection keys. Selections with the same key should be merged
+/// together by the user of this structure: the selection map API itself will overwrite selections
+/// with the same key.
 ///
-/// Because the key depends strictly on the value, we expose the underlying map's API in a
-/// read-only capacity, while mutations use an API closer to `IndexSet`. We don't just use an
-/// `IndexSet` since key computation is expensive (it involves sorting). This type is in its own
-/// module to prevent code from accidentally mutating the underlying map outside the mutation
-/// API.
+/// Once a selection is in the selection map, it must not be modified in a way that changes the
+/// selection key. Therefore, the selection map only hands out mutable access through the
+/// SelectionValue types, which expose the parts of selections that are safe to modify.
 #[derive(Clone)]
 pub(crate) struct SelectionMap {
     hash_builder: DefaultHashBuilder,
@@ -220,7 +217,10 @@ impl Default for SelectionMap {
 }
 
 pub(crate) type Values<'a> = std::slice::Iter<'a, Selection>;
-pub(crate) type ValuesMut<'a> = std::slice::IterMut<'a, Selection>;
+pub(crate) type ValuesMut<'a> = std::iter::Map<
+    std::slice::IterMut<'a, Selection>,
+    fn(&'a mut Selection) -> SelectionValue<'a>,
+>;
 pub(crate) type IntoValues = std::vec::IntoIter<Selection>;
 
 impl SelectionMap {
@@ -281,8 +281,7 @@ impl SelectionMap {
         let index = self.selections.len();
 
         self.table.insert(hash, index, |existing| {
-            self.hash_builder
-                .hash_one(&self.selections[*existing].key())
+            self.hash_builder.hash_one(self.selections[*existing].key())
         });
 
         self.selections.push(value);
@@ -334,17 +333,17 @@ impl SelectionMap {
     }
 
     /// Iterate over all selections.
-    pub(crate) fn values(&self) -> std::slice::Iter<'_, Selection> {
+    pub(crate) fn values(&self) -> Values<'_> {
         self.selections.iter()
     }
 
     /// Iterate over all selections.
-    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = SelectionValue<'_>> {
+    pub(crate) fn values_mut(&mut self) -> ValuesMut<'_> {
         self.selections.iter_mut().map(SelectionValue::new)
     }
 
     /// Iterate over all selections.
-    pub(crate) fn into_values(self) -> std::vec::IntoIter<Selection> {
+    pub(crate) fn into_values(self) -> IntoValues {
         self.selections.into_iter()
     }
 
@@ -619,13 +618,9 @@ impl<'a> VacantEntry<'a> {
 
     pub(crate) fn insert(self, value: Selection) -> Result<SelectionValue<'a>, FederationError> {
         if self.key() != value.key() {
-            return Err(Internal {
-                message: format!(
-                    "Key mismatch when inserting selection {} into vacant entry ",
-                    value
-                ),
-            }
-            .into());
+            return Err(FederationError::internal(format!(
+                "Key mismatch when inserting selection {value} into vacant entry "
+            )));
         };
         Ok(SelectionValue::new(self.map.raw_insert(self.hash, value)))
     }

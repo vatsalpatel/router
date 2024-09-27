@@ -296,6 +296,21 @@ impl SelectionMap {
         }
     }
 
+    /// Decrements all the indices in the table starting at `pivot`.
+    fn decrement_table(&mut self, pivot: usize) {
+        // SAFETY: `self.table` must outlive `iter`
+        // None of the buckets can exit the function
+        unsafe {
+            let iter = self.table.iter();
+            for bucket in iter {
+                let index = bucket.as_mut();
+                if *index >= pivot {
+                    *index -= 1;
+                }
+            }
+        }
+    }
+
     pub(crate) fn insert(&mut self, value: Selection) {
         let hash = self.hash(value.key());
         self.raw_insert(hash, value);
@@ -308,8 +323,7 @@ impl SelectionMap {
             .table
             .remove_entry(hash, |selection| self.selections[*selection].key() == key)?;
         let selection = self.selections.remove(index);
-        // TODO: adjust indices
-        self.rebuild_table_no_grow();
+        self.decrement_table(index);
         Some((index, selection))
     }
 

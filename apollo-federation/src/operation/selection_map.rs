@@ -60,6 +60,8 @@ pub(crate) enum SelectionKey<'a> {
 }
 
 impl SelectionKey<'_> {
+    /// Get an owned structure representing the selection key, for use in map keys
+    /// that are not a plain selection map.
     pub(crate) fn to_owned_key(self) -> OwnedSelectionKey {
         match self {
             Self::Field {
@@ -88,8 +90,9 @@ impl SelectionKey<'_> {
     }
 }
 
+/// An owned structure representing the selection key, for use in map keys
+/// that are not a plain selection map.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-#[deprecated = "Avoid owned keys"]
 pub(crate) enum OwnedSelectionKey {
     Field {
         response_name: Name,
@@ -109,6 +112,7 @@ pub(crate) enum OwnedSelectionKey {
 }
 
 impl OwnedSelectionKey {
+    /// Get a plain, borrowed selection key, that can be used for indexing into a selection map.
     pub(crate) fn as_borrowed_key(&self) -> SelectionKey<'_> {
         match self {
             OwnedSelectionKey::Field {

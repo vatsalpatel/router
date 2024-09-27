@@ -218,6 +218,14 @@ pub(crate) type ValuesMut<'a> =
     std::iter::Map<std::slice::IterMut<'a, Selection>, fn(&'a mut Selection) -> SelectionValue<'a>>;
 pub(crate) type IntoValues = std::vec::IntoIter<Selection>;
 
+/// Return an equality function taking an index into `selections` and returning if the index
+/// matches the given key.
+///
+/// The returned function panics if the index is out of bounds.
+fn key_eq<'a>(selections: &'a [Selection], key: SelectionKey<'a>) -> impl Fn(&usize) -> bool + 'a {
+    move |index| selections[*index].key() == key
+}
+
 impl SelectionMap {
     pub(crate) fn new() -> Self {
         SelectionMap {
@@ -252,24 +260,20 @@ impl SelectionMap {
     pub(crate) fn contains_key(&self, key: SelectionKey) -> bool {
         let hash = self.hash(key);
         self.table
-            .find(hash, |selection| self.selections[*selection].key() == key)
+            .find(hash, key_eq(&self.selections, key))
             .is_some()
     }
 
     /// Returns true if the given key exists in the map.
     pub(crate) fn get(&self, key: SelectionKey<'_>) -> Option<&Selection> {
         let hash = self.hash(key);
-        let index = self
-            .table
-            .get(hash, |selection| self.selections[*selection].key() == key)?;
+        let index = self.table.get(hash, key_eq(&self.selections, key))?;
         Some(&self.selections[*index])
     }
 
     pub(crate) fn get_mut(&mut self, key: SelectionKey<'_>) -> Option<SelectionValue<'_>> {
         let hash = self.hash(key);
-        let index = self
-            .table
-            .get(hash, |selection| self.selections[*selection].key() == key)?;
+        let index = self.table.get(hash, key_eq(&self.selections, key))?;
         Some(SelectionValue::new(&mut self.selections[*index]))
     }
 
@@ -328,7 +332,7 @@ impl SelectionMap {
         let hash = self.hash(key);
         let index = self
             .table
-            .remove_entry(hash, |selection| self.selections[*selection].key() == key)?;
+            .remove_entry(hash, key_eq(&self.selections, key))?;
         let selection = self.selections.remove(index);
         self.decrement_table(index);
         Some((index, selection))
@@ -365,9 +369,7 @@ impl SelectionMap {
 
     pub(super) fn entry<'a>(&'a mut self, key: SelectionKey<'a>) -> Entry<'a> {
         let hash = self.hash(key);
-        let slot = self
-            .table
-            .find(hash, |selection| self.selections[*selection].key() == key);
+        let slot = self.table.find(hash, key_eq(&self.selections, key));
         match slot {
             Some(occupied) => {
                 let index = unsafe { *occupied.as_ptr() };

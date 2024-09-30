@@ -201,7 +201,7 @@ impl FetchIdGenerator {
     }
 
     /// Generate a new ID for a fetch dependency node.
-    pub fn next_id(&self) -> u64 {
+    pub(crate) fn next_id(&self) -> u64 {
         self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -367,10 +367,10 @@ struct ProcessingState {
     /// Nodes that can be handled (because all their parents/dependencies have been processed before).
     // TODO(@goto-bus-stop): Seems like this should be an IndexSet, since every `.push()` first
     // checks if the element is unique.
-    pub next: Vec<NodeIndex>,
+    pub(crate) next: Vec<NodeIndex>,
     /// Nodes that needs some parents/dependencies to be processed first before they can be themselves.
     /// Note that we make sure that this never hold node with no "edges".
-    pub unhandled: Vec<UnhandledNode>,
+    pub(crate) unhandled: Vec<UnhandledNode>,
 }
 
 impl DeferContext {
@@ -397,14 +397,14 @@ impl Default for DeferContext {
 }
 
 impl ProcessingState {
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             next: vec![],
             unhandled: vec![],
         }
     }
 
-    pub fn of_ready_nodes(nodes: Vec<NodeIndex>) -> Self {
+    pub(crate) fn of_ready_nodes(nodes: Vec<NodeIndex>) -> Self {
         Self {
             next: nodes,
             unhandled: vec![],
@@ -415,7 +415,7 @@ impl ProcessingState {
     // structure as `create_state_for_children_of_processed_node`, because it needs access to the
     // graph.
 
-    pub fn merge_with(self, other: ProcessingState) -> ProcessingState {
+    pub(crate) fn merge_with(self, other: ProcessingState) -> ProcessingState {
         let mut next = self.next;
         for g in other.next {
             if !next.contains(&g) {
@@ -469,7 +469,7 @@ impl ProcessingState {
         ProcessingState { next, unhandled }
     }
 
-    pub fn update_for_processed_nodes(self, processed: &[NodeIndex]) -> ProcessingState {
+    pub(crate) fn update_for_processed_nodes(self, processed: &[NodeIndex]) -> ProcessingState {
         let mut next = self.next;
         let mut unhandled = vec![];
         for UnhandledNode {
@@ -708,10 +708,6 @@ impl FetchDependencyGraph {
         }
     }
 
-    pub(crate) fn next_fetch_id(&self) -> u64 {
-        self.fetch_id_generation.next_id()
-    }
-
     pub(crate) fn root_node_by_subgraph_iter(
         &self,
     ) -> impl Iterator<Item = (&Arc<str>, &NodeIndex)> {
@@ -814,25 +810,6 @@ impl FetchDependencyGraph {
     ) -> Result<&mut FetchDependencyGraphNode, FederationError> {
         Ok(Arc::make_mut(graph.node_weight_mut(node).ok_or_else(
             || FederationError::internal("Node unexpectedly missing".to_owned()),
-        )?))
-    }
-
-    pub(crate) fn edge_weight(
-        &self,
-        edge: EdgeIndex,
-    ) -> Result<&Arc<FetchDependencyGraphEdge>, FederationError> {
-        self.graph
-            .edge_weight(edge)
-            .ok_or_else(|| FederationError::internal("Edge unexpectedly missing".to_owned()))
-    }
-
-    /// Does not take `&mut self` so that other fields can be mutated while this borrow lasts
-    fn edge_weight_mut(
-        graph: &mut FetchDependencyGraphPetgraph,
-        edge: EdgeIndex,
-    ) -> Result<&mut FetchDependencyGraphEdge, FederationError> {
-        Ok(Arc::make_mut(graph.edge_weight_mut(edge).ok_or_else(
-            || FederationError::internal("Edge unexpectedly missing"),
         )?))
     }
 
@@ -982,10 +959,6 @@ impl FetchDependencyGraph {
 
     fn is_parent_of(&self, node_id: NodeIndex, maybe_child_id: NodeIndex) -> bool {
         self.parents_of(maybe_child_id).any(|id| id == node_id)
-    }
-
-    fn is_child_of(&self, node_id: NodeIndex, maybe_parent_id: NodeIndex) -> bool {
-        self.parent_relation(node_id, maybe_parent_id).is_some()
     }
 
     fn is_descendant_of(&self, node_id: NodeIndex, maybe_ancestor_id: NodeIndex) -> bool {
@@ -2490,8 +2463,10 @@ impl std::fmt::Display for FetchDependencyGraphEdge {
 }
 
 impl FetchDependencyGraph {
-    // GraphViz output for FetchDependencyGraph
-    pub fn to_dot(&self) -> String {
+    // NOTE: This method is not used during query planning. Rather, it is used during debugging.
+    #[allow(dead_code)]
+    /// GraphViz output for FetchDependencyGraph
+    pub(crate) fn to_dot(&self) -> String {
         fn label_node(node_id: NodeIndex, node: &FetchDependencyGraphNode) -> String {
             let label_str = node.multiline_display(node_id).to_string();
             format!("label=\"{}\"", label_str.replace('"', "\\\""))
@@ -2842,7 +2817,7 @@ impl FetchDependencyGraphNode {
 
     // A variation of `fn display` with multiline output, which is more suitable for
     // GraphViz output.
-    pub fn multiline_display(&self, index: NodeIndex) -> impl std::fmt::Display + '_ {
+    pub(crate) fn multiline_display(&self, index: NodeIndex) -> impl std::fmt::Display + '_ {
         use std::fmt;
         use std::fmt::Display;
         use std::fmt::Formatter;
@@ -4662,7 +4637,6 @@ fn path_for_parent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::position::InterfaceTypeDefinitionPosition;
 
     #[test]
     fn type_condition_fetching_disabled() {
@@ -4790,10 +4764,10 @@ mod tests {
 
     fn object_field_element(
         schema: &ValidFederationSchema,
-        object: apollo_compiler::Name,
-        field: apollo_compiler::Name,
+        object: Name,
+        field: Name,
     ) -> OpPathElement {
-        OpPathElement::Field(super::Field {
+        OpPathElement::Field(Field {
             schema: schema.clone(),
             field_position: ObjectTypeDefinitionPosition::new(object)
                 .field(field)
@@ -4805,27 +4779,10 @@ mod tests {
         })
     }
 
-    fn interface_field_element(
-        schema: &ValidFederationSchema,
-        interface: apollo_compiler::Name,
-        field: apollo_compiler::Name,
-    ) -> OpPathElement {
-        OpPathElement::Field(super::Field {
-            schema: schema.clone(),
-            field_position: InterfaceTypeDefinitionPosition::new(interface)
-                .field(field)
-                .into(),
-            alias: None,
-            arguments: Default::default(),
-            directives: Default::default(),
-            sibling_typename: None,
-        })
-    }
-
     fn inline_fragment_element(
         schema: &ValidFederationSchema,
-        parent_type_name: apollo_compiler::Name,
-        type_condition_name: Option<apollo_compiler::Name>,
+        parent_type_name: Name,
+        type_condition_name: Option<Name>,
     ) -> OpPathElement {
         let parent_type = schema
             .get_type(parent_type_name)

@@ -529,9 +529,9 @@ impl<'a> SelectionValue<'a> {
 
     pub(super) fn get_selection_set_mut(&mut self) -> Option<&mut SelectionSet> {
         match self {
-            SelectionValue::Field(field) => field.get_selection_set_mut(),
-            SelectionValue::FragmentSpread(frag) => Some(frag.get_selection_set_mut()),
-            SelectionValue::InlineFragment(frag) => Some(frag.get_selection_set_mut()),
+            Self::Field(field) => field.get_selection_set_mut(),
+            Self::FragmentSpread(frag) => Some(frag.get_selection_set_mut()),
+            Self::InlineFragment(frag) => Some(frag.get_selection_set_mut()),
         }
     }
 }
@@ -597,7 +597,7 @@ pub(crate) enum Entry<'a> {
 }
 
 impl<'a> Entry<'a> {
-    pub fn or_insert(
+    pub(crate) fn or_insert(
         self,
         produce: impl FnOnce() -> Result<Selection, FederationError>,
     ) -> Result<SelectionValue<'a>, FederationError> {

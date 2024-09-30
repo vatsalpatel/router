@@ -1359,11 +1359,7 @@ mod lazy_map_tests {
     }
 }
 
-fn field_element(
-    schema: &ValidFederationSchema,
-    object: apollo_compiler::Name,
-    field: apollo_compiler::Name,
-) -> OpPathElement {
+fn field_element(schema: &ValidFederationSchema, object: Name, field: Name) -> OpPathElement {
     OpPathElement::Field(super::Field {
         schema: schema.clone(),
         field_position: ObjectTypeDefinitionPosition::new(object)
@@ -1499,7 +1495,10 @@ fn add_at_path_collapses_unnecessary_fragments() {
             Some(
                 &SelectionSet::parse(
                     schema.clone(),
-                    InterfaceTypeDefinitionPosition::new(name!("X")).into(),
+                    InterfaceTypeDefinitionPosition {
+                        type_name: name!("X"),
+                    }
+                    .into(),
                     "... on C { d }",
                 )
                 .unwrap()
